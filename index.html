@@ -46,6 +46,8 @@
     cursor:pointer;
   }
   .toolbar button:hover, .toolbar select:hover{border-color:var(--accent);}
+  .toolbar button:disabled{opacity:.45;cursor:default;}
+  .toolbar button:disabled:hover{border-color:var(--line);}
   .toolbar button.primary{
     background:var(--accent);
     border-color:var(--accent);
@@ -279,7 +281,8 @@
     <button class="swatch" data-color="#f8bbd0" style="background:#f8bbd0" title="Pink"></button>
     <button class="swatch" data-color="#ffe0b2" style="background:#ffe0b2" title="Orange"></button>
     <button class="swatch" data-color="#e1bee7" style="background:#e1bee7" title="Purple"></button>
-    <button class="swatch swatch-none" data-color="" title="Remove highlight">✕</button>
+    <button class="swatch swatch-none" data-color="" title="Highlight off — removes the highlight from the selected text">✕</button>
+    <button id="undoBtn" title="Undo the last change (highlight, fill, clear, or import)" disabled>↩ Undo</button>
   </div>
   <div class="group">
     <button id="saveBtn">💾 Save</button>
@@ -290,7 +293,7 @@
     <button id="printBtn" class="primary">🖨 Print</button>
     <span id="saveStatus" class="save-status"></span>
   </div>
-  <div class="hint">Click inside any day to type — everything saves automatically in this browser. With Auto-fill on, switching to a new month copies the schedule forward onto the same days of the week (or use Fill by weekday to do it manually). Select a name and click a color to highlight it. Use Export/Import to move calendars between computers, and Print for a clean landscape sheet.</div>
+  <div class="hint">Click inside any day to type — everything saves automatically in this browser. With Auto-fill on, switching to a new month copies the schedule forward onto the same days of the week (or use Fill by weekday to do it manually). Select a name and click a color to highlight it (✕ turns a highlight off, ↩ Undo steps back). Use Export/Import to move calendars between computers, and Print for a clean landscape sheet.</div>
 </div>
 
 <div class="sheet">
@@ -402,6 +405,36 @@
   var autoFillChk = document.getElementById("autoFillChk");
   autoFillChk.checked = saved.autoFill;
   autoFillChk.onchange = function(){ persist(false); };
+
+  // ---------- Undo (one step back for highlights, fills, clears, imports) ----------
+  var undoBtn = document.getElementById("undoBtn");
+  var undoStack = [];
+  function snapshot(){
+    saveCurrentEntries();
+    undoStack.push({
+      entries: JSON.parse(JSON.stringify(entries)),
+      notes: JSON.parse(JSON.stringify(notes)),
+      y: curYear, m: curMonth
+    });
+    if(undoStack.length > 30) undoStack.shift();
+    undoBtn.disabled = false;
+  }
+  function dropSnapshot(){
+    undoStack.pop();
+    undoBtn.disabled = !undoStack.length;
+  }
+  undoBtn.onclick = function(){
+    if(!undoStack.length) return;
+    var s = undoStack.pop();
+    entries = s.entries;
+    notes = s.notes;
+    curYear = s.y; curMonth = s.m;
+    ensureYearOption(curYear);
+    render();
+    persist(false);
+    undoBtn.disabled = !undoStack.length;
+    showStatus("Undone ✓");
+  };
 
   // Populate selectors
   MONTHS.forEach(function(m,i){
@@ -559,10 +592,13 @@
     if(hasEntries(keyFor(curYear,curMonth))) return;
     var src = bestFillSource();
     if(!src) return;
+    snapshot();
     if(fillByWeekday(src.key, true) > 0){
       render();
       persist(false);
       showStatus("Auto-filled from " + MONTHS[src.m] + " " + src.y + " ✓");
+    } else {
+      dropSnapshot();
     }
   }
 
@@ -594,6 +630,7 @@
   };
   document.getElementById("clearBtn").onclick = function(){
     if(confirm("Clear all entries for " + MONTHS[curMonth] + " " + curYear + "?")){
+      snapshot();
       entries[keyFor(curYear,curMonth)] = {};
       delete notes[keyFor(curYear,curMonth)];
       render();
@@ -649,6 +686,7 @@
           return;
         }
         if(!confirm("Import this backup? It will replace the calendars saved in this browser.")) return;
+        snapshot();
         entries = data.entries || {};
         notes   = (typeof data.notes === "object" && data.notes) || {};
         if(data.font){ fontSel.value = data.font; document.documentElement.style.setProperty("--entry-font", data.font); }
@@ -715,7 +753,9 @@
   fillOverlay.onclick = function(e){ if(e.target === fillOverlay) fillOverlay.hidden = true; };
 
   document.getElementById("fillApply").onclick = function(){
+    snapshot();
     var filled = fillByWeekday(fillSource.value, document.getElementById("fillOnlyEmpty").checked);
+    if(!filled) dropSnapshot();
     fillOverlay.hidden = true;
     render();
     persist(false);
@@ -743,6 +783,7 @@
         showStatus("Select a name first");
         return;
       }
+      snapshot();
       document.execCommand("styleWithCSS", false, true);
       document.execCommand("hiliteColor", false, this.dataset.color || "transparent");
       persist(true);
