@@ -58,6 +58,14 @@
     font-size:13px;
     color:var(--muted);
   }
+  .save-status{
+    font-size:13px;
+    color:var(--accent);
+    min-width:60px;
+    transition:opacity .4s;
+    opacity:0;
+  }
+  .save-status.show{opacity:1;}
 
   /* ---------- Calendar sheet ---------- */
   .sheet{
@@ -205,10 +213,15 @@
     </select>
   </div>
   <div class="group">
+    <button id="saveBtn">💾 Save</button>
+    <button id="exportBtn" title="Download all calendars as a backup file">⬇ Export</button>
+    <button id="importBtn" title="Load calendars from a backup file">⬆ Import</button>
+    <input type="file" id="importFile" accept=".json,application/json" style="display:none">
     <button id="clearBtn">Clear entries</button>
     <button id="printBtn" class="primary">🖨 Print</button>
+    <span id="saveStatus" class="save-status"></span>
   </div>
-  <div class="hint">Click inside any day to type. Entries are saved per month while this page is open in your browser, so you can flip between months without losing text. Use Print for a clean landscape sheet.</div>
+  <div class="hint">Click inside any day to type. Every calendar is saved automatically in this browser, so your entries are still here when you come back. Use Export to download a backup file you can Import on another computer. Use Print for a clean landscape sheet.</div>
 </div>
 
 <div class="sheet">
@@ -234,12 +247,69 @@
   var curYear = now.getFullYear();
   var curMonth = now.getMonth();
 
-  // In-memory store: entries["YYYY-M"] = { dayNumber: "text" }
-  var entries = {};
+  // ---------- Persistent storage (localStorage) ----------
+  // Saved shape: { entries: {"YYYY-M": {day: html}}, notes: {"YYYY-M": html},
+  //                font: cssFontStack, size: cssSize }
+  var STORAGE_KEY = "printable-calendar-data-v1";
+
+  function loadData(){
+    try{
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if(raw){
+        var data = JSON.parse(raw);
+        if(data && typeof data === "object"){
+          return {
+            entries: data.entries || {},
+            notes: data.notes || {},
+            font: data.font || null,
+            size: data.size || null
+          };
+        }
+      }
+    }catch(e){ /* corrupted or unavailable storage — start fresh */ }
+    return { entries:{}, notes:{}, font:null, size:null };
+  }
+
+  var saved = loadData();
+  // entries["YYYY-M"] = { dayNumber: "html" }
+  var entries = saved.entries;
+  var notes   = saved.notes;
+
+  var saveStatus = document.getElementById("saveStatus");
+  var statusTimer = null;
+  function showStatus(msg){
+    saveStatus.textContent = msg;
+    saveStatus.classList.add("show");
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(function(){ saveStatus.classList.remove("show"); }, 1800);
+  }
+
+  function persist(showMsg){
+    saveCurrentEntries();
+    try{
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        entries: entries,
+        notes: notes,
+        font: fontSel.value,
+        size: sizeSel.value
+      }));
+      if(showMsg) showStatus("Saved ✓");
+    }catch(e){
+      if(showMsg) showStatus("Save failed");
+    }
+  }
+
+  // Auto-save shortly after the user stops typing
+  var autoSaveTimer = null;
+  function scheduleAutoSave(){
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = setTimeout(function(){ persist(true); }, 800);
+  }
 
   var monthSel = document.getElementById("monthSel");
   var yearSel  = document.getElementById("yearSel");
   var calBody  = document.getElementById("calBody");
+  var noteEl   = document.querySelector(".cal-note");
 
   // Populate selectors
   MONTHS.forEach(function(m,i){
@@ -262,6 +332,10 @@
       if(txt) store[el.dataset.day] = el.innerHTML;
     });
     entries[keyFor(curYear,curMonth)] = store;
+
+    var noteTxt = noteEl.innerText.replace(/\u200b/g,"").trim();
+    if(noteTxt) notes[keyFor(curYear,curMonth)] = noteEl.innerHTML;
+    else delete notes[keyFor(curYear,curMonth)];
   }
 
   function render(){
@@ -269,6 +343,7 @@
     yearSel.value  = curYear;
     document.getElementById("titleMonth").textContent = MONTHS[curMonth];
     document.getElementById("titleYear").textContent  = curYear;
+    noteEl.innerHTML = notes[keyFor(curYear,curMonth)] || "";
 
     var store = entries[keyFor(curYear,curMonth)] || {};
     var firstDow = new Date(curYear,curMonth,1).getDay();
@@ -307,10 +382,14 @@
   }
 
   function go(y,m){
-    saveCurrentEntries();
+    persist(false);
     curYear = y; curMonth = m;
     render();
   }
+
+  // Auto-save while typing in any day cell or the header note
+  calBody.addEventListener("input", scheduleAutoSave);
+  noteEl.addEventListener("input", scheduleAutoSave);
 
   document.getElementById("prevBtn").onclick = function(){
     var m = curMonth - 1, y = curYear;
@@ -330,24 +409,88 @@
   document.getElementById("clearBtn").onclick = function(){
     if(confirm("Clear all entries for " + MONTHS[curMonth] + " " + curYear + "?")){
       entries[keyFor(curYear,curMonth)] = {};
+      delete notes[keyFor(curYear,curMonth)];
       render();
+      persist(true);
     }
   };
   document.getElementById("printBtn").onclick = function(){
-    saveCurrentEntries();
+    persist(false);
     window.print();
   };
-  window.onbeforeprint = saveCurrentEntries;
+  window.onbeforeprint = function(){ persist(false); };
+  window.addEventListener("beforeunload", function(){ persist(false); });
+
+  document.getElementById("saveBtn").onclick = function(){ persist(true); };
+
+  // ---------- Backup: export / import all calendars as a JSON file ----------
+  document.getElementById("exportBtn").onclick = function(){
+    persist(false);
+    var payload = {
+      app: "printable-calendar",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      entries: entries,
+      notes: notes,
+      font: fontSel.value,
+      size: sizeSel.value
+    };
+    var blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "calendar-backup-" + new Date().toISOString().slice(0,10) + ".json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+    showStatus("Exported ✓");
+  };
+
+  var importFile = document.getElementById("importFile");
+  document.getElementById("importBtn").onclick = function(){
+    importFile.value = "";
+    importFile.click();
+  };
+  importFile.onchange = function(){
+    var file = this.files && this.files[0];
+    if(!file) return;
+    var reader = new FileReader();
+    reader.onload = function(){
+      try{
+        var data = JSON.parse(reader.result);
+        if(!data || typeof data.entries !== "object" || data.entries === null){
+          alert("That file doesn't look like a calendar backup.");
+          return;
+        }
+        if(!confirm("Import this backup? It will replace the calendars saved in this browser.")) return;
+        entries = data.entries || {};
+        notes   = (typeof data.notes === "object" && data.notes) || {};
+        if(data.font){ fontSel.value = data.font; document.documentElement.style.setProperty("--entry-font", data.font); }
+        if(data.size){ sizeSel.value = data.size; document.documentElement.style.setProperty("--entry-size", data.size); }
+        render();
+        persist(false);
+        showStatus("Imported ✓");
+      }catch(e){
+        alert("Could not read that file: " + e.message);
+      }
+    };
+    reader.readAsText(file);
+  };
 
   // Font controls
   var fontSel = document.getElementById("fontSel");
   var sizeSel = document.getElementById("sizeSel");
   fontSel.onchange = function(){
     document.documentElement.style.setProperty("--entry-font", this.value);
+    persist(false);
   };
   sizeSel.onchange = function(){
     document.documentElement.style.setProperty("--entry-size", this.value);
+    persist(false);
   };
+  // Restore saved font/size preferences
+  if(saved.font){ fontSel.value = saved.font; if(fontSel.value === saved.font) document.documentElement.style.setProperty("--entry-font", saved.font); }
+  if(saved.size){ sizeSel.value = saved.size; if(sizeSel.value === saved.size) document.documentElement.style.setProperty("--entry-size", saved.size); }
 
   render();
 })();
