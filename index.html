@@ -67,6 +67,59 @@
   }
   .save-status.show{opacity:1;}
 
+  /* ---------- Highlight swatches ---------- */
+  .toolbar .swatch{
+    width:24px;
+    height:24px;
+    padding:0;
+    border-radius:50%;
+    border:1px solid var(--line);
+    flex:0 0 auto;
+  }
+  .toolbar .swatch:hover{border-color:var(--ink);}
+  .toolbar .swatch-none{
+    background:var(--paper);
+    font-size:11px;
+    color:var(--muted);
+    line-height:1;
+  }
+
+  /* ---------- Fill-by-weekday dialog ---------- */
+  .overlay{
+    position:fixed;
+    inset:0;
+    background:rgba(20,30,50,.45);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    z-index:50;
+  }
+  .overlay[hidden]{display:none;}
+  .modal{
+    background:var(--paper);
+    border:1px solid var(--line);
+    border-radius:8px;
+    box-shadow:0 8px 30px rgba(20,30,50,.25);
+    padding:22px 24px;
+    max-width:440px;
+    width:calc(100% - 40px);
+  }
+  .modal h3{font-size:18px;margin-bottom:8px;}
+  .modal p{font-size:13.5px;color:var(--muted);margin-bottom:14px;line-height:1.45;}
+  .modal .row{display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:14px;flex-wrap:wrap;}
+  .modal select{
+    font:inherit;font-size:14px;padding:7px 10px;
+    border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);
+  }
+  .modal .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;}
+  .modal .actions button{
+    font:inherit;font-size:14px;padding:8px 14px;
+    border:1px solid var(--line);background:var(--paper);color:var(--ink);
+    border-radius:6px;cursor:pointer;
+  }
+  .modal .actions button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;}
+  .modal .actions button.primary:hover{background:#254c3f;}
+
   /* ---------- Calendar sheet ---------- */
   .sheet{
     max-width:1100px;
@@ -159,7 +212,9 @@
   @media print{
     @page{size:landscape;margin:0.4in;}
     body{background:#fff;padding:0;}
+    *{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
     .toolbar{display:none;}
+    .overlay{display:none !important;}
     .sheet{
       max-width:none;
       border:none;
@@ -182,6 +237,10 @@
     <select id="yearSel"></select>
     <button id="nextBtn" title="Next month">Next ▶</button>
     <button id="todayBtn">Today</button>
+    <button id="fillBtn" title="Copy another month's entries onto the same days of the week">🔁 Fill by weekday</button>
+    <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:5px;" title="When you switch to an empty month, automatically fill it from the last filled month, matched by day of the week">
+      <input type="checkbox" id="autoFillChk"> Auto-fill new months
+    </label>
   </div>
   <div class="group">
     <label for="fontSel" style="font-size:13px;color:var(--muted);">Font</label>
@@ -212,6 +271,16 @@
       <option value="24px">24</option>
     </select>
   </div>
+  <div class="group" title="Select a name inside a day, then click a color to highlight it">
+    <span style="font-size:13px;color:var(--muted);">Highlight</span>
+    <button class="swatch" data-color="#fff59d" style="background:#fff59d" title="Yellow"></button>
+    <button class="swatch" data-color="#b9f6ca" style="background:#b9f6ca" title="Green"></button>
+    <button class="swatch" data-color="#b3e5fc" style="background:#b3e5fc" title="Blue"></button>
+    <button class="swatch" data-color="#f8bbd0" style="background:#f8bbd0" title="Pink"></button>
+    <button class="swatch" data-color="#ffe0b2" style="background:#ffe0b2" title="Orange"></button>
+    <button class="swatch" data-color="#e1bee7" style="background:#e1bee7" title="Purple"></button>
+    <button class="swatch swatch-none" data-color="" title="Remove highlight">✕</button>
+  </div>
   <div class="group">
     <button id="saveBtn">💾 Save</button>
     <button id="exportBtn" title="Download all calendars as a backup file">⬇ Export</button>
@@ -221,7 +290,7 @@
     <button id="printBtn" class="primary">🖨 Print</button>
     <span id="saveStatus" class="save-status"></span>
   </div>
-  <div class="hint">Click inside any day to type. Every calendar is saved automatically in this browser, so your entries are still here when you come back. Use Export to download a backup file you can Import on another computer. Use Print for a clean landscape sheet.</div>
+  <div class="hint">Click inside any day to type — everything saves automatically in this browser. With Auto-fill on, switching to a new month copies the schedule forward onto the same days of the week (or use Fill by weekday to do it manually). Select a name and click a color to highlight it. Use Export/Import to move calendars between computers, and Print for a clean landscape sheet.</div>
 </div>
 
 <div class="sheet">
@@ -237,6 +306,24 @@
     </thead>
     <tbody id="calBody"></tbody>
   </table>
+</div>
+
+<div id="fillOverlay" class="overlay" hidden>
+  <div class="modal">
+    <h3>Fill by day of the week</h3>
+    <p id="fillDesc"></p>
+    <div class="row">
+      <label for="fillSource">Copy from:</label>
+      <select id="fillSource"></select>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="fillOnlyEmpty" checked> Only fill days that are empty</label>
+    </div>
+    <div class="actions">
+      <button id="fillCancel">Cancel</button>
+      <button id="fillApply" class="primary">Fill month</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -262,12 +349,13 @@
             entries: data.entries || {},
             notes: data.notes || {},
             font: data.font || null,
-            size: data.size || null
+            size: data.size || null,
+            autoFill: data.autoFill !== false
           };
         }
       }
     }catch(e){ /* corrupted or unavailable storage — start fresh */ }
-    return { entries:{}, notes:{}, font:null, size:null };
+    return { entries:{}, notes:{}, font:null, size:null, autoFill:true };
   }
 
   var saved = loadData();
@@ -291,7 +379,8 @@
         entries: entries,
         notes: notes,
         font: fontSel.value,
-        size: sizeSel.value
+        size: sizeSel.value,
+        autoFill: autoFillChk.checked
       }));
       if(showMsg) showStatus("Saved ✓");
     }catch(e){
@@ -310,6 +399,9 @@
   var yearSel  = document.getElementById("yearSel");
   var calBody  = document.getElementById("calBody");
   var noteEl   = document.querySelector(".cal-note");
+  var autoFillChk = document.getElementById("autoFillChk");
+  autoFillChk.checked = saved.autoFill;
+  autoFillChk.onchange = function(){ persist(false); };
 
   // Populate selectors
   MONTHS.forEach(function(m,i){
@@ -324,6 +416,38 @@
   }
 
   function keyFor(y,m){ return y + "-" + m; }
+
+  function hasEntries(key){
+    var s = entries[key];
+    return !!s && Object.keys(s).length > 0;
+  }
+
+  // All months that contain at least one entry, oldest first
+  function monthsWithData(){
+    var list = [];
+    Object.keys(entries).forEach(function(k){
+      if(!hasEntries(k)) return;
+      var parts = k.split("-");
+      var y = parseInt(parts[0],10), m = parseInt(parts[1],10);
+      if(isNaN(y) || isNaN(m) || m < 0 || m > 11) return;
+      list.push({key:k, y:y, m:m, count:Object.keys(entries[k]).length});
+    });
+    list.sort(function(a,b){ return a.y - b.y || a.m - b.m; });
+    return list;
+  }
+
+  // Make sure the year dropdown can show a given year
+  function ensureYearOption(y){
+    var exists = false;
+    for(var i=0;i<yearSel.options.length;i++){
+      if(parseInt(yearSel.options[i].value,10) === y){ exists = true; break; }
+    }
+    if(!exists){
+      var o = document.createElement("option");
+      o.value = y; o.textContent = y;
+      yearSel.appendChild(o);
+    }
+  }
 
   function saveCurrentEntries(){
     var store = {};
@@ -381,10 +505,72 @@
     }
   }
 
+  // Copy srcKey month's entries onto the displayed month, matched by weekday
+  // (1st Monday -> 1st Monday, 2nd Tuesday -> 2nd Tuesday, ...). Returns days filled.
+  function fillByWeekday(srcKey, onlyEmpty){
+    var parts = srcKey.split("-");
+    var sy = parseInt(parts[0],10), sm = parseInt(parts[1],10);
+    var src = entries[srcKey] || {};
+
+    var byDow = [[],[],[],[],[],[],[]];
+    var srcDays = new Date(sy, sm+1, 0).getDate();
+    for(var d=1; d<=srcDays; d++){
+      byDow[new Date(sy,sm,d).getDay()].push(src[d] || "");
+    }
+
+    var tgtKey = keyFor(curYear,curMonth);
+    var tgt = entries[tgtKey] || {};
+    var counters = [0,0,0,0,0,0,0];
+    var filled = 0;
+    var tgtDays = new Date(curYear,curMonth+1,0).getDate();
+    for(var d=1; d<=tgtDays; d++){
+      var w = new Date(curYear,curMonth,d).getDay();
+      var list = byDow[w];
+      var idx = counters[w]++;
+      if(!list.length) continue;
+      var val = list[idx % list.length];   // 5th occurrence wraps to the 1st
+      if(!val) continue;
+      if(onlyEmpty && tgt[d]) continue;
+      tgt[d] = val;
+      filled++;
+    }
+    entries[tgtKey] = tgt;
+    return filled;
+  }
+
+  // Pick the best source month for the displayed month: the closest earlier
+  // month with entries, otherwise the earliest later one.
+  function bestFillSource(){
+    var curKey = keyFor(curYear,curMonth);
+    var sources = monthsWithData().filter(function(c){ return c.key !== curKey; });
+    if(!sources.length) return null;
+    var pick = null;
+    for(var i=0;i<sources.length;i++){
+      var c = sources[i];
+      if(c.y < curYear || (c.y === curYear && c.m < curMonth)) pick = c;
+    }
+    return pick || sources[0];
+  }
+
+  // When the displayed month is empty and auto-fill is on, populate it from
+  // the best source month so the weekly schedule carries forward automatically.
+  function autoFillIfEmpty(){
+    if(!autoFillChk.checked) return;
+    if(hasEntries(keyFor(curYear,curMonth))) return;
+    var src = bestFillSource();
+    if(!src) return;
+    if(fillByWeekday(src.key, true) > 0){
+      render();
+      persist(false);
+      showStatus("Auto-filled from " + MONTHS[src.m] + " " + src.y + " ✓");
+    }
+  }
+
   function go(y,m){
     persist(false);
     curYear = y; curMonth = m;
     render();
+    autoFillIfEmpty();
   }
 
   // Auto-save while typing in any day cell or the header note
@@ -467,15 +653,101 @@
         notes   = (typeof data.notes === "object" && data.notes) || {};
         if(data.font){ fontSel.value = data.font; document.documentElement.style.setProperty("--entry-font", data.font); }
         if(data.size){ sizeSel.value = data.size; document.documentElement.style.setProperty("--entry-size", data.size); }
+
+        // Jump to a month that actually has entries so the import is visible.
+        // Prefer the current month; otherwise the next month with data; otherwise the latest.
+        var withData = monthsWithData();
+        if(withData.length && !hasEntries(keyFor(curYear,curMonth))){
+          var target = null;
+          for(var i=0;i<withData.length;i++){
+            var c = withData[i];
+            if(c.y > curYear || (c.y === curYear && c.m >= curMonth)){ target = c; break; }
+          }
+          if(!target) target = withData[withData.length-1];
+          curYear = target.y; curMonth = target.m;
+          ensureYearOption(curYear);
+        }
         render();
         persist(false);
-        showStatus("Imported ✓");
+        showStatus(withData.length
+          ? "Imported ✓ (" + withData.length + " month" + (withData.length>1?"s":"") + ")"
+          : "Imported ✓ (no entries in file)");
       }catch(e){
         alert("Could not read that file: " + e.message);
       }
     };
     reader.readAsText(file);
   };
+
+  // ---------- Fill the displayed month from another month, matched by weekday ----------
+  var fillOverlay = document.getElementById("fillOverlay");
+  var fillSource  = document.getElementById("fillSource");
+  var fillDesc    = document.getElementById("fillDesc");
+
+  document.getElementById("fillBtn").onclick = function(){
+    persist(false);
+    var curKey = keyFor(curYear,curMonth);
+    var sources = monthsWithData().filter(function(c){ return c.key !== curKey; });
+    if(!sources.length){
+      alert("No other month has entries yet. Type a schedule into one month first, then use Fill by weekday to copy it onto other months.");
+      return;
+    }
+    fillDesc.textContent = "Fill " + MONTHS[curMonth] + " " + curYear +
+      " using another month's schedule. Entries are matched to the same day of the week — " +
+      "the source month's 1st Monday goes to this month's 1st Monday, its 2nd Tuesday to this month's 2nd Tuesday, and so on.";
+    fillSource.innerHTML = "";
+    sources.forEach(function(c){
+      var o = document.createElement("option");
+      o.value = c.key;
+      o.textContent = MONTHS[c.m] + " " + c.y + " (" + c.count + " day" + (c.count>1?"s":"") + " filled)";
+      fillSource.appendChild(o);
+    });
+    // Preselect the closest month before the displayed one, else the last option
+    var pick = 0;
+    for(var i=0;i<sources.length;i++){
+      if(sources[i].y < curYear || (sources[i].y === curYear && sources[i].m < curMonth)) pick = i;
+    }
+    fillSource.selectedIndex = pick;
+    fillOverlay.hidden = false;
+  };
+
+  document.getElementById("fillCancel").onclick = function(){ fillOverlay.hidden = true; };
+  fillOverlay.onclick = function(e){ if(e.target === fillOverlay) fillOverlay.hidden = true; };
+
+  document.getElementById("fillApply").onclick = function(){
+    var filled = fillByWeekday(fillSource.value, document.getElementById("fillOnlyEmpty").checked);
+    fillOverlay.hidden = true;
+    render();
+    persist(false);
+    showStatus("Filled " + filled + " day" + (filled===1?"":"s") + " ✓");
+  };
+
+  // ---------- Highlight selected text in a color ----------
+  function selectionInsideEditable(){
+    var sel = window.getSelection();
+    if(!sel || sel.rangeCount === 0 || sel.isCollapsed) return false;
+    var n = sel.getRangeAt(0).commonAncestorContainer;
+    if(n.nodeType === 3) n = n.parentNode;
+    while(n && n !== document.body){
+      if(n.classList && (n.classList.contains("entry") || n.classList.contains("cal-note"))) return true;
+      n = n.parentNode;
+    }
+    return false;
+  }
+
+  document.querySelectorAll(".swatch").forEach(function(btn){
+    // Don't let the button click steal the text selection from the calendar
+    btn.addEventListener("mousedown", function(e){ e.preventDefault(); });
+    btn.addEventListener("click", function(){
+      if(!selectionInsideEditable()){
+        showStatus("Select a name first");
+        return;
+      }
+      document.execCommand("styleWithCSS", false, true);
+      document.execCommand("hiliteColor", false, this.dataset.color || "transparent");
+      persist(true);
+    });
+  });
 
   // Font controls
   var fontSel = document.getElementById("fontSel");
@@ -493,6 +765,7 @@
   if(saved.size){ sizeSel.value = saved.size; if(sizeSel.value === saved.size) document.documentElement.style.setProperty("--entry-size", saved.size); }
 
   render();
+  autoFillIfEmpty();
 })();
 </script>
 
