@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Printable Calendar</title>
+<style>
+  :root{
+    --ink:#1a2332;
+    --line:#c8ccd4;
+    --line-light:#e4e7ec;
+    --accent:#2e5e4e;
+    --muted:#8a93a1;
+    --paper:#ffffff;
+    --bg:#eef0f3;
+    --entry-font:"Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --entry-size:12.5px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    font-family:"Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    background:var(--bg);
+    color:var(--ink);
+    padding:24px;
+  }
+
+  /* ---------- Toolbar (hidden when printing) ---------- */
+  .toolbar{
+    max-width:1100px;
+    margin:0 auto 18px auto;
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px;
+    align-items:center;
+    justify-content:space-between;
+  }
+  .toolbar .group{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .toolbar button, .toolbar select{
+    font:inherit;
+    font-size:14px;
+    padding:8px 14px;
+    border:1px solid var(--line);
+    background:var(--paper);
+    color:var(--ink);
+    border-radius:6px;
+    cursor:pointer;
+  }
+  .toolbar button:hover, .toolbar select:hover{border-color:var(--accent);}
+  .toolbar button.primary{
+    background:var(--accent);
+    border-color:var(--accent);
+    color:#fff;
+    font-weight:600;
+  }
+  .toolbar button.primary:hover{background:#254c3f;}
+  .toolbar .hint{
+    flex-basis:100%;
+    font-size:13px;
+    color:var(--muted);
+  }
+
+  /* ---------- Calendar sheet ---------- */
+  .sheet{
+    max-width:1100px;
+    margin:0 auto;
+    background:var(--paper);
+    border:1px solid var(--line);
+    padding:28px 32px 32px 32px;
+    box-shadow:0 2px 10px rgba(20,30,50,.08);
+  }
+  .cal-header{
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    border-bottom:3px solid var(--ink);
+    padding-bottom:10px;
+    margin-bottom:14px;
+  }
+  .cal-title{
+    font-size:34px;
+    font-weight:700;
+    letter-spacing:.5px;
+  }
+  .cal-title .year{color:var(--accent);font-weight:400;}
+  .cal-note{
+    font-family:var(--entry-font);
+    font-size:14px;
+    color:var(--muted);
+    outline:none;
+    min-width:180px;
+    text-align:right;
+  }
+  .cal-note:empty::before{content:"Click to add a note…";color:#c0c6cf;}
+
+  table{
+    width:100%;
+    border-collapse:collapse;
+    table-layout:fixed;
+  }
+  thead th{
+    font-size:12px;
+    font-weight:700;
+    text-transform:uppercase;
+    letter-spacing:1.5px;
+    color:var(--accent);
+    padding:8px 6px;
+    border:1px solid var(--line);
+    background:#f4f7f5;
+  }
+  tbody td{
+    border:1px solid var(--line);
+    vertical-align:top;
+    height:110px;
+    padding:0;
+    position:relative;
+  }
+  td.blank{background:#fafbfc;}
+  .daynum{
+    font-size:13px;
+    font-weight:700;
+    padding:6px 8px 2px 8px;
+    color:var(--ink);
+    user-select:none;
+  }
+  td.today .daynum{
+    color:#fff;
+    background:var(--accent);
+    display:inline-block;
+    border-radius:4px;
+    margin:4px 0 0 4px;
+    padding:2px 7px;
+  }
+  .entry{
+    font-family:var(--entry-font);
+    font-size:var(--entry-size);
+    line-height:1.4;
+    padding:2px 8px 8px 8px;
+    min-height:70px;
+    outline:none;
+    word-wrap:break-word;
+    white-space:pre-wrap;
+  }
+  .entry:focus{background:#f2f8f5;}
+  .entry:empty::before{
+    content:"+";
+    color:#d6dbe2;
+    font-size:14px;
+  }
+
+  /* ---------- Print styles ---------- */
+  @media print{
+    @page{size:landscape;margin:0.4in;}
+    body{background:#fff;padding:0;}
+    .toolbar{display:none;}
+    .sheet{
+      max-width:none;
+      border:none;
+      box-shadow:none;
+      padding:0;
+    }
+    tbody td{height:95px;}
+    .entry:empty::before{content:"";}
+    .entry:focus{background:transparent;}
+    .cal-note:empty{display:none;}
+  }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <div class="group">
+    <button id="prevBtn" title="Previous month">◀ Prev</button>
+    <select id="monthSel"></select>
+    <select id="yearSel"></select>
+    <button id="nextBtn" title="Next month">Next ▶</button>
+    <button id="todayBtn">Today</button>
+  </div>
+  <div class="group">
+    <label for="fontSel" style="font-size:13px;color:var(--muted);">Font</label>
+    <select id="fontSel">
+      <option value='"Segoe UI", "Helvetica Neue", Arial, sans-serif'>Segoe UI</option>
+      <option value='Arial, Helvetica, sans-serif'>Arial</option>
+      <option value='Verdana, Geneva, sans-serif'>Verdana</option>
+      <option value='Tahoma, Geneva, sans-serif'>Tahoma</option>
+      <option value='"Trebuchet MS", sans-serif'>Trebuchet MS</option>
+      <option value='Georgia, "Times New Roman", serif'>Georgia</option>
+      <option value='"Times New Roman", Times, serif'>Times New Roman</option>
+      <option value='Garamond, "Palatino Linotype", serif'>Garamond</option>
+      <option value='"Palatino Linotype", Palatino, serif'>Palatino</option>
+      <option value='"Courier New", Courier, monospace'>Courier New</option>
+      <option value='"Comic Sans MS", "Comic Sans", cursive'>Comic Sans</option>
+      <option value='"Brush Script MT", cursive'>Brush Script</option>
+    </select>
+    <label for="sizeSel" style="font-size:13px;color:var(--muted);">Size</label>
+    <select id="sizeSel">
+      <option value="10px">10</option>
+      <option value="11px">11</option>
+      <option value="12px">12</option>
+      <option value="12.5px" selected>12.5</option>
+      <option value="14px">14</option>
+      <option value="16px">16</option>
+      <option value="18px">18</option>
+      <option value="20px">20</option>
+      <option value="24px">24</option>
+    </select>
+  </div>
+  <div class="group">
+    <button id="clearBtn">Clear entries</button>
+    <button id="printBtn" class="primary">🖨 Print</button>
+  </div>
+  <div class="hint">Click inside any day to type. Entries are saved per month while this page is open in your browser, so you can flip between months without losing text. Use Print for a clean landscape sheet.</div>
+</div>
+
+<div class="sheet">
+  <div class="cal-header">
+    <div class="cal-title"><span id="titleMonth"></span> <span class="year" id="titleYear"></span></div>
+    <div class="cal-note" contenteditable="true" spellcheck="false"></div>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Sun</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th>
+      </tr>
+    </thead>
+    <tbody id="calBody"></tbody>
+  </table>
+</div>
+
+<script>
+(function(){
+  var MONTHS = ["January","February","March","April","May","June",
+                "July","August","September","October","November","December"];
+  var now = new Date();
+  var curYear = now.getFullYear();
+  var curMonth = now.getMonth();
+
+  // In-memory store: entries["YYYY-M"] = { dayNumber: "text" }
+  var entries = {};
+
+  var monthSel = document.getElementById("monthSel");
+  var yearSel  = document.getElementById("yearSel");
+  var calBody  = document.getElementById("calBody");
+
+  // Populate selectors
+  MONTHS.forEach(function(m,i){
+    var o = document.createElement("option");
+    o.value = i; o.textContent = m;
+    monthSel.appendChild(o);
+  });
+  for(var y = curYear - 5; y <= curYear + 10; y++){
+    var o = document.createElement("option");
+    o.value = y; o.textContent = y;
+    yearSel.appendChild(o);
+  }
+
+  function keyFor(y,m){ return y + "-" + m; }
+
+  function saveCurrentEntries(){
+    var store = {};
+    calBody.querySelectorAll(".entry").forEach(function(el){
+      var txt = el.innerText.replace(/\u200b/g,"").trim();
+      if(txt) store[el.dataset.day] = el.innerHTML;
+    });
+    entries[keyFor(curYear,curMonth)] = store;
+  }
+
+  function render(){
+    monthSel.value = curMonth;
+    yearSel.value  = curYear;
+    document.getElementById("titleMonth").textContent = MONTHS[curMonth];
+    document.getElementById("titleYear").textContent  = curYear;
+
+    var store = entries[keyFor(curYear,curMonth)] || {};
+    var firstDow = new Date(curYear,curMonth,1).getDay();
+    var daysInMonth = new Date(curYear,curMonth+1,0).getDate();
+    var today = new Date();
+    var isThisMonth = (today.getFullYear()===curYear && today.getMonth()===curMonth);
+
+    calBody.innerHTML = "";
+    var day = 1;
+    for(var week = 0; week < 6; week++){
+      if(day > daysInMonth) break;
+      var tr = document.createElement("tr");
+      for(var dow = 0; dow < 7; dow++){
+        var td = document.createElement("td");
+        if((week===0 && dow < firstDow) || day > daysInMonth){
+          td.className = "blank";
+        } else {
+          if(isThisMonth && day === today.getDate()) td.className = "today";
+          var num = document.createElement("div");
+          num.className = "daynum";
+          num.textContent = day;
+          var entry = document.createElement("div");
+          entry.className = "entry";
+          entry.contentEditable = "true";
+          entry.spellcheck = false;
+          entry.dataset.day = day;
+          if(store[day]) entry.innerHTML = store[day];
+          td.appendChild(num);
+          td.appendChild(entry);
+          day++;
+        }
+        tr.appendChild(td);
+      }
+      calBody.appendChild(tr);
+    }
+  }
+
+  function go(y,m){
+    saveCurrentEntries();
+    curYear = y; curMonth = m;
+    render();
+  }
+
+  document.getElementById("prevBtn").onclick = function(){
+    var m = curMonth - 1, y = curYear;
+    if(m < 0){ m = 11; y--; }
+    go(y,m);
+  };
+  document.getElementById("nextBtn").onclick = function(){
+    var m = curMonth + 1, y = curYear;
+    if(m > 11){ m = 0; y++; }
+    go(y,m);
+  };
+  monthSel.onchange = function(){ go(curYear, parseInt(this.value,10)); };
+  yearSel.onchange  = function(){ go(parseInt(this.value,10), curMonth); };
+  document.getElementById("todayBtn").onclick = function(){
+    go(now.getFullYear(), now.getMonth());
+  };
+  document.getElementById("clearBtn").onclick = function(){
+    if(confirm("Clear all entries for " + MONTHS[curMonth] + " " + curYear + "?")){
+      entries[keyFor(curYear,curMonth)] = {};
+      render();
+    }
+  };
+  document.getElementById("printBtn").onclick = function(){
+    saveCurrentEntries();
+    window.print();
+  };
+  window.onbeforeprint = saveCurrentEntries;
+
+  // Font controls
+  var fontSel = document.getElementById("fontSel");
+  var sizeSel = document.getElementById("sizeSel");
+  fontSel.onchange = function(){
+    document.documentElement.style.setProperty("--entry-font", this.value);
+  };
+  sizeSel.onchange = function(){
+    document.documentElement.style.setProperty("--entry-size", this.value);
+  };
+
+  render();
+})();
+</script>
+
+</body>
+</html>
