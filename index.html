@@ -92,6 +92,14 @@
     color:var(--muted);
     line-height:1;
   }
+  .toolbar .modebtn{font-size:13px;padding:7px 11px;}
+  .toolbar .modebtn.active{
+    background:var(--accent);
+    border-color:var(--accent);
+    color:#fff;
+    font-weight:600;
+  }
+  body.select-mode .entry{cursor:pointer;}
   .toolbar .tagbtn{font-weight:600;}
   #lateBtn{background:#b3e5fc;border-color:#8fd4f7;}
   #southBtn{background:#fff59d;border-color:#e8dd78;}
@@ -382,6 +390,9 @@
     </select>
   </div>
   <div class="group" title="Select a name inside a day, then click a color to highlight it">
+    <span style="font-size:13px;color:var(--muted);">Mouse</span>
+    <button id="textModeBtn" class="modebtn active" title="Normal typing — click inside a day to edit its text">Text</button>
+    <button id="selectModeBtn" class="modebtn" title="Click a name to select the whole name at once, then click a highlight color">Select</button>
     <span style="font-size:13px;color:var(--muted);">Highlight</span>
     <button class="swatch" data-color="#fff59d" style="background:#fff59d" title="Yellow"></button>
     <button class="swatch" data-color="#b9f6ca" style="background:#b9f6ca" title="Green"></button>
@@ -1659,6 +1670,36 @@
     range.setEndAfter(endN);
     return range;
   }
+
+  // ---------- Text / Select mouse modes ----------
+  // Text = normal editing. Select = one click grabs the whole name, ready for
+  // a highlight color.
+  var selectMode = false;
+  var textModeBtn = document.getElementById("textModeBtn");
+  var selectModeBtn = document.getElementById("selectModeBtn");
+  function setSelectMode(on){
+    selectMode = on;
+    textModeBtn.classList.toggle("active", !on);
+    selectModeBtn.classList.toggle("active", on);
+    document.body.classList.toggle("select-mode", on);
+    if(on) showStatus("Click a name to select it");
+  }
+  textModeBtn.onclick = function(){ setSelectMode(false); };
+  selectModeBtn.onclick = function(){ setSelectMode(true); };
+
+  calBody.addEventListener("click", function(e){
+    if(!selectMode || activeTag || prnPlaceId) return;
+    var t = e.target;
+    while(t && t !== calBody && !(t.classList && t.classList.contains("entry"))) t = t.parentNode;
+    if(!t || t === calBody) return;
+    var pos = caretFromPoint(e.clientX, e.clientY);
+    if(!pos || !pos.node) return;
+    var range = lineRangeForNode(pos.node, t);
+    if(!range || range.collapsed || !range.toString().trim()) return;
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  });
 
   calBody.addEventListener("click", function(e){
     if(!activeTag) return;
