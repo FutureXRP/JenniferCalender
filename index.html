@@ -750,6 +750,7 @@
   function generateDayHTML(y,m,d){
     var dow = new Date(y,m,d).getDay();
     var parts = [];
+    var offParts = [];   // people scheduled off go at the bottom of the box
     employees.forEach(function(emp){
       if(!emp.name.trim() || (emp.status || "ft") === "prn" || !emp.days[dow]) return;
       var p = ptoFor(emp.id, y, m, d);
@@ -758,9 +759,8 @@
         if(cover){
           parts.push('<div>' + esc(cover) +
                      ' <span class="pto-note">(for ' + esc(emp.name) + ')</span></div>');
-        } else {
-          parts.push('<div><span class="pto-off">' + esc(emp.name) + '</span> <span class="pto-note">PTO</span></div>');
         }
+        offParts.push('<div><span class="pto-off">' + esc(emp.name) + '</span> <span class="pto-note">PTO</span></div>');
       } else {
         parts.push('<div>' + esc(emp.name) + '</div>');
       }
@@ -771,7 +771,7 @@
       if(!e || !e.name.trim()) return;
       parts.push('<div>' + esc(e.name) + ' <span class="pto-note">PRN</span></div>');
     });
-    return parts.join("");
+    return parts.concat(offParts).join("");
   }
 
   function generateMonth(y,m){
