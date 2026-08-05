@@ -400,7 +400,7 @@
   <div class="cols">
     <div class="col">
       <h2>Employees &amp; weekly schedule</h2>
-      <div class="sub">Add each employee and check the days of the week they normally work. Every new month is built from this. Changing it here never rewrites a month you've already built — use "Rebuild this month" below when you want that.</div>
+      <div class="sub">Add each employee and check the days of the week they normally work — the calendar builds itself from this and stays in sync as you make changes here. Once you edit a month by hand, that month is locked in and won't change on its own ("Rebuild this month" refreshes it if you ever want that).</div>
       <div id="empList"></div>
       <div class="actions-row">
         <button class="mini" id="empAdd">＋ Add employee</button>
@@ -458,7 +458,6 @@
   var MONTHS = ["January","February","March","April","May","June",
                 "July","August","September","October","November","December"];
   var DOW_SHORT = ["Su","Mo","Tu","We","Th","Fr","Sa"];
-  var PALETTE = ["#fff59d","#b9f6ca","#b3e5fc","#f8bbd0","#ffe0b2","#e1bee7"];
   var now = new Date();
   var curYear = now.getFullYear();
   var curMonth = now.getMonth();
@@ -483,20 +482,25 @@
             autoFill: data.autoFill !== false,
             employees: Array.isArray(data.employees) ? data.employees : [],
             pto: Array.isArray(data.pto) ? data.pto : [],
-            nextId: data.nextId || 1
+            nextId: data.nextId || 1,
+            generatedMonths: data.generatedMonths || {}
           };
         }
       }
     }catch(e){ /* corrupted or unavailable storage — start fresh */ }
-    return { entries:{}, notes:{}, font:null, size:null, autoFill:true, employees:[], pto:[], nextId:1 };
+    return { entries:{}, notes:{}, font:null, size:null, autoFill:true, employees:[], pto:[], nextId:1, generatedMonths:{} };
   }
 
   var saved = loadData();
   var entries   = saved.entries;   // entries["YYYY-M"] = { dayNumber: "html" }
   var notes     = saved.notes;
-  var employees = saved.employees; // [{id,name,color,days:[7]}]
+  var employees = saved.employees; // [{id,name,days:[7]}]
   var pto       = saved.pto;       // [{id,empId,start,end,cover}]
   var nextId    = saved.nextId;
+  // Months that were auto-built from the weekly schedule and never hand-edited.
+  // These stay in sync while the team is edited; a month the user has typed in
+  // is removed from this set and never rewritten automatically.
+  var generatedMonths = saved.generatedMonths;
 
   var saveStatus = document.getElementById("saveStatus");
   var statusTimer = null;
@@ -518,7 +522,8 @@
         autoFill: autoFillChk.checked,
         employees: employees,
         pto: pto,
-        nextId: nextId
+        nextId: nextId,
+        generatedMonths: generatedMonths
       }));
       if(showMsg) showStatus("Saved ✓");
     }catch(e){
@@ -551,6 +556,7 @@
       notes: JSON.parse(JSON.stringify(notes)),
       employees: JSON.parse(JSON.stringify(employees)),
       pto: JSON.parse(JSON.stringify(pto)),
+      generatedMonths: JSON.parse(JSON.stringify(generatedMonths)),
       y: curYear, m: curMonth
     });
     if(undoStack.length > 30) undoStack.shift();
@@ -567,6 +573,7 @@
     notes = s.notes;
     employees = s.employees;
     pto = s.pto;
+    generatedMonths = s.generatedMonths || {};
     curYear = s.y; curMonth = s.m;
     ensureYearOption(curYear);
     render();
@@ -694,17 +701,6 @@
     });
   }
 
-  function empById(id){
-    for(var i=0;i<employees.length;i++) if(employees[i].id === id) return employees[i];
-    return null;
-  }
-  function empByName(name){
-    var n = String(name).trim().toLowerCase();
-    for(var i=0;i<employees.length;i++)
-      if(employees[i].name.trim().toLowerCase() === n) return employees[i];
-    return null;
-  }
-
   function dateNum(y,m,d){ return new Date(y,m,d).setHours(0,0,0,0); }
   function parseDateStr(s){ // "YYYY-MM-DD" -> local midnight timestamp, or null
     if(!s) return null;
@@ -725,14 +721,9 @@
     return null;
   }
 
-  function nameSpan(name, color){
-    return color
-      ? '<span style="background-color: ' + color + ';">' + esc(name) + '</span>'
-      : esc(name);
-  }
-
   // The generated content for one day: everyone scheduled that weekday,
-  // with PTO swaps applied.
+  // with PTO swaps applied. Names are plain text — highlights are added by
+  // hand afterwards with the Late/South buttons or the color swatches.
   function generateDayHTML(y,m,d){
     var dow = new Date(y,m,d).getDay();
     var parts = [];
@@ -742,14 +733,13 @@
       if(p){
         var cover = (p.cover || "").trim();
         if(cover){
-          var cEmp = empByName(cover);
-          parts.push('<div>' + nameSpan(cover, cEmp ? cEmp.color : null) +
+          parts.push('<div>' + esc(cover) +
                      ' <span class="pto-note">(for ' + esc(emp.name) + ')</span></div>');
         } else {
           parts.push('<div><span class="pto-off">' + esc(emp.name) + '</span> <span class="pto-note">PTO</span></div>');
         }
       } else {
-        parts.push('<div>' + nameSpan(emp.name, emp.color) + '</div>');
+        parts.push('<div>' + esc(emp.name) + '</div>');
       }
     });
     return parts.join("");
@@ -787,6 +777,32 @@
     if(touchedVisible) render();
   }
 
+  // Re-sync every auto-built, never-hand-edited month with the current team
+  // (called when employees or their weekly days change). Also builds the
+  // displayed month if it's still empty. Hand-edited months are left alone.
+  function regenAutoMonths(){
+    saveCurrentEntries();
+    var touchedVisible = false;
+    Object.keys(generatedMonths).forEach(function(k){
+      if(!generatedMonths[k]) return;
+      var p = k.split("-");
+      var y = parseInt(p[0],10), m = parseInt(p[1],10);
+      if(isNaN(y) || isNaN(m)) return;
+      entries[k] = generateMonth(y,m);
+      if(y === curYear && m === curMonth) touchedVisible = true;
+    });
+    var curKey = keyFor(curYear,curMonth);
+    if(!generatedMonths[curKey] && !hasEntries(curKey) && teamActive()){
+      var store = generateMonth(curYear,curMonth);
+      if(Object.keys(store).length){
+        entries[curKey] = store;
+        generatedMonths[curKey] = true;
+        touchedVisible = true;
+      }
+    }
+    if(touchedVisible) render();
+  }
+
   function renderDash(){
     // Employees
     empList.innerHTML = "";
@@ -797,25 +813,12 @@
       var row = document.createElement("div");
       row.className = "emp-row";
 
-      var dot = document.createElement("button");
-      dot.className = "dot";
-      dot.title = "Click to change this person's highlight color";
-      dot.style.background = emp.color || "var(--paper)";
-      if(!emp.color) dot.textContent = "○";
-      dot.onclick = function(){
-        var i = PALETTE.indexOf(emp.color);
-        emp.color = (i === PALETTE.length - 1) ? null : PALETTE[i + 1] || PALETTE[0];
-        renderDash();
-        persist(false);
-      };
-      row.appendChild(dot);
-
       var name = document.createElement("input");
       name.className = "emp-name";
       name.placeholder = "Name";
       name.value = emp.name;
       name.oninput = function(){ emp.name = this.value; };
-      name.onchange = function(){ renderDash(); persist(false); };
+      name.onchange = function(){ renderDash(); regenAutoMonths(); persist(false); };
       row.appendChild(name);
 
       var dows = document.createElement("div");
@@ -826,7 +829,12 @@
           var cb = document.createElement("input");
           cb.type = "checkbox";
           cb.checked = !!emp.days[w];
-          cb.onchange = function(){ emp.days[w] = this.checked; persist(false); };
+          cb.onchange = function(){
+            snapshot();
+            emp.days[w] = this.checked;
+            regenAutoMonths();
+            persist(true);
+          };
           lab.appendChild(cb);
           lab.appendChild(document.createTextNode(DOW_SHORT[w]));
           dows.appendChild(lab);
@@ -844,6 +852,7 @@
         employees = employees.filter(function(e){ return e.id !== emp.id; });
         pto = pto.filter(function(p){ return p.empId !== emp.id; });
         renderDash();
+        regenAutoMonths();
         persist(true);
       };
       row.appendChild(del);
@@ -949,7 +958,6 @@
     employees.push({
       id: "e" + (nextId++),
       name: "",
-      color: PALETTE[employees.length % PALETTE.length],
       days: [false,false,false,false,false,false,false]
     });
     renderDash();
@@ -982,6 +990,7 @@
     if(!confirm("Rebuild " + MONTHS[curMonth] + " " + curYear + " from the weekly schedules and PTO? This replaces the month's current entries.")) return;
     snapshot();
     entries[keyFor(curYear,curMonth)] = generateMonth(curYear,curMonth);
+    generatedMonths[keyFor(curYear,curMonth)] = true;
     render();
     persist(true);
     showStatus("Month rebuilt ✓");
@@ -1047,6 +1056,7 @@
       var store = generateMonth(curYear,curMonth);
       if(Object.keys(store).length){
         entries[keyFor(curYear,curMonth)] = store;
+        generatedMonths[keyFor(curYear,curMonth)] = true;
         render();
         persist(false);
         showStatus("Built from work schedule ✓");
@@ -1074,8 +1084,12 @@
     materializeIfEmpty();
   }
 
-  // Auto-save while typing in any day cell or the header note
-  calBody.addEventListener("input", scheduleAutoSave);
+  // Auto-save while typing in any day cell or the header note. A hand-edited
+  // month stops tracking the weekly schedule so it never changes on its own.
+  calBody.addEventListener("input", function(){
+    delete generatedMonths[keyFor(curYear,curMonth)];
+    scheduleAutoSave();
+  });
   noteEl.addEventListener("input", scheduleAutoSave);
 
   document.getElementById("prevBtn").onclick = function(){
@@ -1098,6 +1112,7 @@
       snapshot();
       entries[keyFor(curYear,curMonth)] = {};
       delete notes[keyFor(curYear,curMonth)];
+      delete generatedMonths[keyFor(curYear,curMonth)];
       render();
       persist(true);
     }
@@ -1288,6 +1303,7 @@
       employees: employees,
       pto: pto,
       nextId: nextId,
+      generatedMonths: generatedMonths,
       font: fontSel.value,
       size: sizeSel.value
     };
@@ -1325,6 +1341,7 @@
         if(Array.isArray(data.employees)) employees = data.employees;
         if(Array.isArray(data.pto)) pto = data.pto;
         if(data.nextId) nextId = Math.max(nextId, data.nextId);
+        generatedMonths = (data.generatedMonths && typeof data.generatedMonths === "object") ? data.generatedMonths : {};
         if(data.font){ fontSel.value = data.font; document.documentElement.style.setProperty("--entry-font", data.font); }
         if(data.size){ sizeSel.value = data.size; document.documentElement.style.setProperty("--entry-size", data.size); }
 
@@ -1392,6 +1409,7 @@
     snapshot();
     var filled = fillByWeekday(fillSource.value, document.getElementById("fillOnlyEmpty").checked);
     if(!filled) dropSnapshot();
+    else delete generatedMonths[keyFor(curYear,curMonth)];
     fillOverlay.hidden = true;
     render();
     persist(false);
