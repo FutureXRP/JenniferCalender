@@ -3,7 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Printable Calendar</title>
+<title>Work Schedule Dashboard</title>
+<meta name="theme-color" content="#2e5e4e">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Schedule">
 <style>
   :root{
     --ink:#1a2332;
@@ -85,42 +92,92 @@
     color:var(--muted);
     line-height:1;
   }
-
-  /* ---------- Fill-by-weekday dialog ---------- */
-  .overlay{
-    position:fixed;
-    inset:0;
-    background:rgba(20,30,50,.45);
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    z-index:50;
+  .toolbar .tagbtn{font-weight:600;}
+  #lateBtn{background:#b3e5fc;border-color:#8fd4f7;}
+  #southBtn{background:#fff59d;border-color:#e8dd78;}
+  .toolbar .tagbtn.active{
+    box-shadow:0 0 0 2px var(--accent);
+    border-color:var(--accent);
   }
-  .overlay[hidden]{display:none;}
-  .modal{
+  body.tagging .entry{cursor:crosshair;}
+
+  /* ---------- Dashboard panel (Team & PTO) ---------- */
+  .dash{
+    max-width:1100px;
+    margin:0 auto 18px auto;
     background:var(--paper);
     border:1px solid var(--line);
     border-radius:8px;
-    box-shadow:0 8px 30px rgba(20,30,50,.25);
-    padding:22px 24px;
-    max-width:440px;
-    width:calc(100% - 40px);
+    padding:18px 22px 20px 22px;
+    box-shadow:0 2px 10px rgba(20,30,50,.08);
   }
-  .modal h3{font-size:18px;margin-bottom:8px;}
-  .modal p{font-size:13.5px;color:var(--muted);margin-bottom:14px;line-height:1.45;}
-  .modal .row{display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:14px;flex-wrap:wrap;}
-  .modal select{
-    font:inherit;font-size:14px;padding:7px 10px;
-    border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);
+  .dash[hidden]{display:none;}
+  .dash .cols{display:flex;gap:30px;flex-wrap:wrap;}
+  .dash .col{flex:1 1 400px;min-width:330px;}
+  .dash h2{font-size:16px;margin-bottom:4px;}
+  .dash .sub{font-size:12.5px;color:var(--muted);margin-bottom:12px;line-height:1.45;}
+  .emp-row, .pto-row{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    margin-bottom:7px;
+    flex-wrap:wrap;
   }
-  .modal .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;}
-  .modal .actions button{
-    font:inherit;font-size:14px;padding:8px 14px;
-    border:1px solid var(--line);background:var(--paper);color:var(--ink);
-    border-radius:6px;cursor:pointer;
+  .emp-row input.emp-name{
+    flex:1 1 110px;
+    min-width:100px;
+    padding:6px 9px;
+    border:1px solid var(--line);
+    border-radius:6px;
+    font:inherit;
+    font-size:14px;
   }
-  .modal .actions button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;}
-  .modal .actions button.primary:hover{background:#254c3f;}
+  .dot{
+    width:24px;height:24px;
+    border-radius:50%;
+    border:1px solid var(--line);
+    cursor:pointer;
+    padding:0;
+    flex:0 0 auto;
+    background:var(--paper);
+  }
+  .dot:hover{border-color:var(--ink);}
+  .dowbox{display:flex;gap:1px;}
+  .dowbox label{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    font-size:10px;
+    color:var(--muted);
+    padding:1px 3px;
+    cursor:pointer;
+    user-select:none;
+  }
+  .mini{
+    font:inherit;
+    font-size:13px;
+    padding:5px 9px;
+    border:1px solid var(--line);
+    background:var(--paper);
+    color:var(--ink);
+    border-radius:6px;
+    cursor:pointer;
+    flex:0 0 auto;
+  }
+  .mini:hover{border-color:var(--accent);}
+  .mini.danger:hover{border-color:#c0392b;color:#c0392b;}
+  .pto-row select, .pto-row input{
+    font:inherit;
+    font-size:13px;
+    padding:5px 7px;
+    border:1px solid var(--line);
+    border-radius:6px;
+    background:var(--paper);
+    color:var(--ink);
+  }
+  .pto-row input.pto-cover{flex:1 1 110px;min-width:100px;}
+  .dash .empty-note{font-size:13px;color:var(--muted);font-style:italic;margin-bottom:8px;}
+  .dash .actions-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center;}
 
   /* ---------- Calendar sheet ---------- */
   .sheet{
@@ -209,6 +266,44 @@
     color:#d6dbe2;
     font-size:14px;
   }
+  .pto-note{color:var(--muted);font-size:11px;}
+  .pto-off{color:var(--muted);text-decoration:line-through;}
+
+  /* ---------- Fill-by-weekday dialog ---------- */
+  .overlay{
+    position:fixed;
+    inset:0;
+    background:rgba(20,30,50,.45);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    z-index:50;
+  }
+  .overlay[hidden]{display:none;}
+  .modal{
+    background:var(--paper);
+    border:1px solid var(--line);
+    border-radius:8px;
+    box-shadow:0 8px 30px rgba(20,30,50,.25);
+    padding:22px 24px;
+    max-width:440px;
+    width:calc(100% - 40px);
+  }
+  .modal h3{font-size:18px;margin-bottom:8px;}
+  .modal p{font-size:13.5px;color:var(--muted);margin-bottom:14px;line-height:1.45;}
+  .modal .row{display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:14px;flex-wrap:wrap;}
+  .modal select{
+    font:inherit;font-size:14px;padding:7px 10px;
+    border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);
+  }
+  .modal .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;}
+  .modal .actions button{
+    font:inherit;font-size:14px;padding:8px 14px;
+    border:1px solid var(--line);background:var(--paper);color:var(--ink);
+    border-radius:6px;cursor:pointer;
+  }
+  .modal .actions button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;}
+  .modal .actions button.primary:hover{background:#254c3f;}
 
   /* ---------- Print styles ---------- */
   @media print{
@@ -216,6 +311,7 @@
     body{background:#fff;padding:0;}
     *{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
     .toolbar{display:none;}
+    .dash{display:none;}
     .overlay{display:none !important;}
     .sheet{
       max-width:none;
@@ -239,8 +335,9 @@
     <select id="yearSel"></select>
     <button id="nextBtn" title="Next month">Next ▶</button>
     <button id="todayBtn">Today</button>
+    <button id="teamBtn" title="Manage employees, their weekly schedules, and PTO">👥 Team &amp; PTO</button>
     <button id="fillBtn" title="Copy another month's entries onto the same days of the week">🔁 Fill by weekday</button>
-    <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:5px;" title="When you switch to an empty month, automatically fill it from the last filled month, matched by day of the week">
+    <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:5px;" title="When you switch to an empty month, automatically build it from the team's weekly schedule (or copy the last filled month if no team is set up)">
       <input type="checkbox" id="autoFillChk"> Auto-fill new months
     </label>
   </div>
@@ -282,18 +379,44 @@
     <button class="swatch" data-color="#ffe0b2" style="background:#ffe0b2" title="Orange"></button>
     <button class="swatch" data-color="#e1bee7" style="background:#e1bee7" title="Purple"></button>
     <button class="swatch swatch-none" data-color="" title="Highlight off — removes the highlight from the selected text">✕</button>
+    <button id="lateBtn" class="tagbtn" title="Click this, then click a name on the calendar to mark it Late (blue). Click the button again or press Esc to stop.">Late</button>
+    <button id="southBtn" class="tagbtn" title="Click this, then click a name on the calendar to mark it South (yellow). Click the button again or press Esc to stop.">South</button>
     <button id="undoBtn" title="Undo the last change (highlight, fill, clear, or import)" disabled>↩ Undo</button>
   </div>
   <div class="group">
     <button id="saveBtn">💾 Save</button>
-    <button id="exportBtn" title="Download all calendars as a backup file">⬇ Export</button>
-    <button id="importBtn" title="Load calendars from a backup file">⬆ Import</button>
+    <button id="exportBtn" title="Download all calendars, employees, and PTO as a backup file">⬇ Export</button>
+    <button id="importBtn" title="Load a backup file">⬆ Import</button>
     <input type="file" id="importFile" accept=".json,application/json" style="display:none">
     <button id="clearBtn">Clear entries</button>
+    <button id="pdfBtn" title="Turn this month into a PDF and share it — on a phone this opens the share menu so you can text it">📱 Text as PDF</button>
     <button id="printBtn" class="primary">🖨 Print</button>
     <span id="saveStatus" class="save-status"></span>
   </div>
-  <div class="hint">Click inside any day to type — everything saves automatically in this browser. With Auto-fill on, switching to a new month copies the schedule forward onto the same days of the week (or use Fill by weekday to do it manually). Select a name and click a color to highlight it (✕ turns a highlight off, ↩ Undo steps back). Use Export/Import to move calendars between computers, and Print for a clean landscape sheet.</div>
+  <div class="hint">Set up your team under 👥 Team &amp; PTO — each person's weekly schedule builds every new month automatically, and PTO swaps in the covering employee on just those days. Each month is saved separately, so edits to one month never change another. Click inside any day to edit it by hand, select a name and click a color to highlight it (↩ Undo steps back), and use 📱 Text as PDF to send the month from your phone.</div>
+</div>
+
+<div class="dash" id="dashPanel" hidden>
+  <div class="cols">
+    <div class="col">
+      <h2>Employees &amp; weekly schedule</h2>
+      <div class="sub">Add each employee and check the days of the week they normally work. Every new month is built from this. Changing it here never rewrites a month you've already built — use "Rebuild this month" below when you want that.</div>
+      <div id="empList"></div>
+      <div class="actions-row">
+        <button class="mini" id="empAdd">＋ Add employee</button>
+        <button class="mini" id="rebuildBtn" title="Rebuild the month shown below from the weekly schedules and PTO (replaces its current entries)">⟳ Rebuild this month</button>
+      </div>
+    </div>
+    <div class="col">
+      <h2>PTO / time off</h2>
+      <div class="sub">When someone is off, their name comes off those days on the calendar. Pick a cover person to put in their slot (or leave it blank to show them as PTO). Only the affected days change — the rest of the month stays as-is.</div>
+      <div id="ptoList"></div>
+      <div class="actions-row">
+        <button class="mini" id="ptoAdd">＋ Add PTO</button>
+      </div>
+    </div>
+  </div>
+  <datalist id="empNames"></datalist>
 </div>
 
 <div class="sheet">
@@ -329,17 +452,21 @@
   </div>
 </div>
 
+<script src="./jspdf.umd.min.js"></script>
 <script>
 (function(){
   var MONTHS = ["January","February","March","April","May","June",
                 "July","August","September","October","November","December"];
+  var DOW_SHORT = ["Su","Mo","Tu","We","Th","Fr","Sa"];
+  var PALETTE = ["#fff59d","#b9f6ca","#b3e5fc","#f8bbd0","#ffe0b2","#e1bee7"];
   var now = new Date();
   var curYear = now.getFullYear();
   var curMonth = now.getMonth();
 
   // ---------- Persistent storage (localStorage) ----------
-  // Saved shape: { entries: {"YYYY-M": {day: html}}, notes: {"YYYY-M": html},
-  //                font: cssFontStack, size: cssSize }
+  // v2 shape: { entries:{"YYYY-M":{day:html}}, notes:{"YYYY-M":html}, font, size,
+  //            autoFill, employees:[{id,name,color,days:[7 bools]}],
+  //            pto:[{id,empId,start:"YYYY-MM-DD",end:"YYYY-MM-DD",cover}], nextId }
   var STORAGE_KEY = "printable-calendar-data-v1";
 
   function loadData(){
@@ -353,18 +480,23 @@
             notes: data.notes || {},
             font: data.font || null,
             size: data.size || null,
-            autoFill: data.autoFill !== false
+            autoFill: data.autoFill !== false,
+            employees: Array.isArray(data.employees) ? data.employees : [],
+            pto: Array.isArray(data.pto) ? data.pto : [],
+            nextId: data.nextId || 1
           };
         }
       }
     }catch(e){ /* corrupted or unavailable storage — start fresh */ }
-    return { entries:{}, notes:{}, font:null, size:null, autoFill:true };
+    return { entries:{}, notes:{}, font:null, size:null, autoFill:true, employees:[], pto:[], nextId:1 };
   }
 
   var saved = loadData();
-  // entries["YYYY-M"] = { dayNumber: "html" }
-  var entries = saved.entries;
-  var notes   = saved.notes;
+  var entries   = saved.entries;   // entries["YYYY-M"] = { dayNumber: "html" }
+  var notes     = saved.notes;
+  var employees = saved.employees; // [{id,name,color,days:[7]}]
+  var pto       = saved.pto;       // [{id,empId,start,end,cover}]
+  var nextId    = saved.nextId;
 
   var saveStatus = document.getElementById("saveStatus");
   var statusTimer = null;
@@ -372,7 +504,7 @@
     saveStatus.textContent = msg;
     saveStatus.classList.add("show");
     clearTimeout(statusTimer);
-    statusTimer = setTimeout(function(){ saveStatus.classList.remove("show"); }, 1800);
+    statusTimer = setTimeout(function(){ saveStatus.classList.remove("show"); }, 2200);
   }
 
   function persist(showMsg){
@@ -383,7 +515,10 @@
         notes: notes,
         font: fontSel.value,
         size: sizeSel.value,
-        autoFill: autoFillChk.checked
+        autoFill: autoFillChk.checked,
+        employees: employees,
+        pto: pto,
+        nextId: nextId
       }));
       if(showMsg) showStatus("Saved ✓");
     }catch(e){
@@ -406,7 +541,7 @@
   autoFillChk.checked = saved.autoFill;
   autoFillChk.onchange = function(){ persist(false); };
 
-  // ---------- Undo (one step back for highlights, fills, clears, imports) ----------
+  // ---------- Undo (one step back for schedule changes, PTO, fills, clears, imports) ----------
   var undoBtn = document.getElementById("undoBtn");
   var undoStack = [];
   function snapshot(){
@@ -414,6 +549,8 @@
     undoStack.push({
       entries: JSON.parse(JSON.stringify(entries)),
       notes: JSON.parse(JSON.stringify(notes)),
+      employees: JSON.parse(JSON.stringify(employees)),
+      pto: JSON.parse(JSON.stringify(pto)),
       y: curYear, m: curMonth
     });
     if(undoStack.length > 30) undoStack.shift();
@@ -428,9 +565,12 @@
     var s = undoStack.pop();
     entries = s.entries;
     notes = s.notes;
+    employees = s.employees;
+    pto = s.pto;
     curYear = s.y; curMonth = s.m;
     ensureYearOption(curYear);
     render();
+    renderDash();
     persist(false);
     undoBtn.disabled = !undoStack.length;
     showStatus("Undone ✓");
@@ -485,12 +625,12 @@
   function saveCurrentEntries(){
     var store = {};
     calBody.querySelectorAll(".entry").forEach(function(el){
-      var txt = el.innerText.replace(/\u200b/g,"").trim();
+      var txt = el.innerText.replace(/​/g,"").trim();
       if(txt) store[el.dataset.day] = el.innerHTML;
     });
     entries[keyFor(curYear,curMonth)] = store;
 
-    var noteTxt = noteEl.innerText.replace(/\u200b/g,"").trim();
+    var noteTxt = noteEl.innerText.replace(/​/g,"").trim();
     if(noteTxt) notes[keyFor(curYear,curMonth)] = noteEl.innerHTML;
     else delete notes[keyFor(curYear,curMonth)];
   }
@@ -538,6 +678,316 @@
     }
   }
 
+  // ---------- Employees, weekly block schedules, PTO ----------
+  var dashPanel = document.getElementById("dashPanel");
+  var empList = document.getElementById("empList");
+  var ptoList = document.getElementById("ptoList");
+  var empNames = document.getElementById("empNames");
+
+  function esc(s){
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+
+  function teamActive(){
+    return employees.some(function(e){
+      return e.name.trim() && e.days.some(Boolean);
+    });
+  }
+
+  function empById(id){
+    for(var i=0;i<employees.length;i++) if(employees[i].id === id) return employees[i];
+    return null;
+  }
+  function empByName(name){
+    var n = String(name).trim().toLowerCase();
+    for(var i=0;i<employees.length;i++)
+      if(employees[i].name.trim().toLowerCase() === n) return employees[i];
+    return null;
+  }
+
+  function dateNum(y,m,d){ return new Date(y,m,d).setHours(0,0,0,0); }
+  function parseDateStr(s){ // "YYYY-MM-DD" -> local midnight timestamp, or null
+    if(!s) return null;
+    var p = s.split("-");
+    if(p.length !== 3) return null;
+    return new Date(+p[0], +p[1]-1, +p[2]).setHours(0,0,0,0);
+  }
+  function ptoFor(empId, y, m, d){
+    var t = dateNum(y,m,d);
+    for(var i=0;i<pto.length;i++){
+      var p = pto[i];
+      if(p.empId !== empId) continue;
+      var a = parseDateStr(p.start), b = parseDateStr(p.end);
+      if(a === null || b === null) continue;
+      if(a > b){ var tmp = a; a = b; b = tmp; }
+      if(t >= a && t <= b) return p;
+    }
+    return null;
+  }
+
+  function nameSpan(name, color){
+    return color
+      ? '<span style="background-color: ' + color + ';">' + esc(name) + '</span>'
+      : esc(name);
+  }
+
+  // The generated content for one day: everyone scheduled that weekday,
+  // with PTO swaps applied.
+  function generateDayHTML(y,m,d){
+    var dow = new Date(y,m,d).getDay();
+    var parts = [];
+    employees.forEach(function(emp){
+      if(!emp.name.trim() || !emp.days[dow]) return;
+      var p = ptoFor(emp.id, y, m, d);
+      if(p){
+        var cover = (p.cover || "").trim();
+        if(cover){
+          var cEmp = empByName(cover);
+          parts.push('<div>' + nameSpan(cover, cEmp ? cEmp.color : null) +
+                     ' <span class="pto-note">(for ' + esc(emp.name) + ')</span></div>');
+        } else {
+          parts.push('<div><span class="pto-off">' + esc(emp.name) + '</span> <span class="pto-note">PTO</span></div>');
+        }
+      } else {
+        parts.push('<div>' + nameSpan(emp.name, emp.color) + '</div>');
+      }
+    });
+    return parts.join("");
+  }
+
+  function generateMonth(y,m){
+    var store = {};
+    var days = new Date(y,m+1,0).getDate();
+    for(var d=1; d<=days; d++){
+      var html = generateDayHTML(y,m,d);
+      if(html) store[d] = html;
+    }
+    return store;
+  }
+
+  // Rebuild specific days (in already-built months only) after a PTO change.
+  // Each affected day is recomputed from the weekly schedule + PTO.
+  function rebuildRange(startTs, endTs){
+    if(startTs === null || endTs === null || !teamActive()) return;
+    if(startTs > endTs){ var t = startTs; startTs = endTs; endTs = t; }
+    saveCurrentEntries();
+    var touchedVisible = false;
+    var cur = new Date(startTs);
+    while(cur.getTime() <= endTs){
+      var y = cur.getFullYear(), m = cur.getMonth(), d = cur.getDate();
+      var key = keyFor(y,m);
+      if(entries[key]){ // only months that already exist — new months build correctly on their own
+        var html = generateDayHTML(y,m,d);
+        if(html) entries[key][d] = html;
+        else delete entries[key][d];
+        if(y === curYear && m === curMonth) touchedVisible = true;
+      }
+      cur.setDate(d + 1);
+    }
+    if(touchedVisible) render();
+  }
+
+  function renderDash(){
+    // Employees
+    empList.innerHTML = "";
+    if(!employees.length){
+      empList.innerHTML = '<div class="empty-note">No employees yet — add your team to start building months automatically.</div>';
+    }
+    employees.forEach(function(emp){
+      var row = document.createElement("div");
+      row.className = "emp-row";
+
+      var dot = document.createElement("button");
+      dot.className = "dot";
+      dot.title = "Click to change this person's highlight color";
+      dot.style.background = emp.color || "var(--paper)";
+      if(!emp.color) dot.textContent = "○";
+      dot.onclick = function(){
+        var i = PALETTE.indexOf(emp.color);
+        emp.color = (i === PALETTE.length - 1) ? null : PALETTE[i + 1] || PALETTE[0];
+        renderDash();
+        persist(false);
+      };
+      row.appendChild(dot);
+
+      var name = document.createElement("input");
+      name.className = "emp-name";
+      name.placeholder = "Name";
+      name.value = emp.name;
+      name.oninput = function(){ emp.name = this.value; };
+      name.onchange = function(){ renderDash(); persist(false); };
+      row.appendChild(name);
+
+      var dows = document.createElement("div");
+      dows.className = "dowbox";
+      for(var w=0; w<7; w++){
+        (function(w){
+          var lab = document.createElement("label");
+          var cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.checked = !!emp.days[w];
+          cb.onchange = function(){ emp.days[w] = this.checked; persist(false); };
+          lab.appendChild(cb);
+          lab.appendChild(document.createTextNode(DOW_SHORT[w]));
+          dows.appendChild(lab);
+        })(w);
+      }
+      row.appendChild(dows);
+
+      var del = document.createElement("button");
+      del.className = "mini danger";
+      del.textContent = "✕";
+      del.title = "Remove this employee (months already built keep their entries)";
+      del.onclick = function(){
+        if(!confirm("Remove " + (emp.name || "this employee") + "? Months already built keep their entries; their PTO rows are removed.")) return;
+        snapshot();
+        employees = employees.filter(function(e){ return e.id !== emp.id; });
+        pto = pto.filter(function(p){ return p.empId !== emp.id; });
+        renderDash();
+        persist(true);
+      };
+      row.appendChild(del);
+
+      empList.appendChild(row);
+    });
+
+    // datalist for cover suggestions
+    empNames.innerHTML = "";
+    employees.forEach(function(e){
+      if(!e.name.trim()) return;
+      var o = document.createElement("option");
+      o.value = e.name;
+      empNames.appendChild(o);
+    });
+
+    // PTO
+    ptoList.innerHTML = "";
+    if(!pto.length){
+      ptoList.innerHTML = '<div class="empty-note">No PTO entered.</div>';
+    }
+    pto.forEach(function(p){
+      var row = document.createElement("div");
+      row.className = "pto-row";
+
+      var sel = document.createElement("select");
+      employees.forEach(function(e){
+        var o = document.createElement("option");
+        o.value = e.id;
+        o.textContent = e.name || "(unnamed)";
+        if(e.id === p.empId) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.onchange = function(){
+        snapshot();
+        var oldA = parseDateStr(p.start), oldB = parseDateStr(p.end);
+        p.empId = this.value;
+        rebuildRange(oldA, oldB);
+        persist(true);
+      };
+      row.appendChild(sel);
+
+      var start = document.createElement("input");
+      start.type = "date";
+      start.value = p.start || "";
+      var end = document.createElement("input");
+      end.type = "date";
+      end.value = p.end || "";
+      function dateChanged(){
+        snapshot();
+        var oldA = parseDateStr(p.start), oldB = parseDateStr(p.end);
+        p.start = start.value;
+        p.end = end.value || start.value;
+        if(!end.value) end.value = start.value;
+        var newA = parseDateStr(p.start), newB = parseDateStr(p.end);
+        rebuildRange(Math.min(oldA===null?Infinity:oldA, newA===null?Infinity:newA) === Infinity ? newA :
+                     Math.min(oldA===null?newA:oldA, newA===null?oldA:newA),
+                     Math.max(oldB===null?newB:oldB, newB===null?oldB:newB));
+        persist(true);
+      }
+      start.onchange = dateChanged;
+      end.onchange = dateChanged;
+      row.appendChild(start);
+      row.appendChild(end);
+
+      var cover = document.createElement("input");
+      cover.className = "pto-cover";
+      cover.setAttribute("list","empNames");
+      cover.placeholder = "Cover (optional)";
+      cover.value = p.cover || "";
+      cover.onchange = function(){
+        snapshot();
+        p.cover = this.value;
+        rebuildRange(parseDateStr(p.start), parseDateStr(p.end));
+        persist(true);
+      };
+      row.appendChild(cover);
+
+      var del = document.createElement("button");
+      del.className = "mini danger";
+      del.textContent = "✕";
+      del.title = "Delete this PTO (those days go back to the normal schedule)";
+      del.onclick = function(){
+        snapshot();
+        var a = parseDateStr(p.start), b = parseDateStr(p.end);
+        pto = pto.filter(function(x){ return x.id !== p.id; });
+        rebuildRange(a, b);
+        renderDash();
+        persist(true);
+      };
+      row.appendChild(del);
+
+      ptoList.appendChild(row);
+    });
+  }
+
+  document.getElementById("teamBtn").onclick = function(){
+    dashPanel.hidden = !dashPanel.hidden;
+  };
+
+  document.getElementById("empAdd").onclick = function(){
+    snapshot();
+    employees.push({
+      id: "e" + (nextId++),
+      name: "",
+      color: PALETTE[employees.length % PALETTE.length],
+      days: [false,false,false,false,false,false,false]
+    });
+    renderDash();
+    persist(false);
+    var inputs = empList.querySelectorAll(".emp-name");
+    if(inputs.length) inputs[inputs.length-1].focus();
+  };
+
+  document.getElementById("ptoAdd").onclick = function(){
+    if(!employees.length){
+      alert("Add an employee first — PTO is entered per employee.");
+      return;
+    }
+    snapshot();
+    var today = new Date();
+    var iso = today.getFullYear() + "-" +
+              String(today.getMonth()+1).padStart(2,"0") + "-" +
+              String(today.getDate()).padStart(2,"0");
+    pto.push({ id: "p" + (nextId++), empId: employees[0].id, start: iso, end: iso, cover: "" });
+    rebuildRange(parseDateStr(iso), parseDateStr(iso));
+    renderDash();
+    persist(true);
+  };
+
+  document.getElementById("rebuildBtn").onclick = function(){
+    if(!teamActive()){
+      alert("Add employees and check their work days first.");
+      return;
+    }
+    if(!confirm("Rebuild " + MONTHS[curMonth] + " " + curYear + " from the weekly schedules and PTO? This replaces the month's current entries.")) return;
+    snapshot();
+    entries[keyFor(curYear,curMonth)] = generateMonth(curYear,curMonth);
+    render();
+    persist(true);
+    showStatus("Month rebuilt ✓");
+  };
+
+  // ---------- Fill / auto-build for empty months ----------
   // Copy srcKey month's entries onto the displayed month, matched by weekday
   // (1st Monday -> 1st Monday, 2nd Tuesday -> 2nd Tuesday, ...). Returns days filled.
   function fillByWeekday(srcKey, onlyEmpty){
@@ -585,11 +1035,26 @@
     return pick || sources[0];
   }
 
-  // When the displayed month is empty and auto-fill is on, populate it from
-  // the best source month so the weekly schedule carries forward automatically.
-  function autoFillIfEmpty(){
+  // When the displayed month is empty and auto-fill is on, build it:
+  // from the team's weekly schedules if set up, otherwise by copying the
+  // best source month matched by weekday. Built months are then saved and
+  // never change on their own.
+  function materializeIfEmpty(){
     if(!autoFillChk.checked) return;
     if(hasEntries(keyFor(curYear,curMonth))) return;
+    if(teamActive()){
+      snapshot();
+      var store = generateMonth(curYear,curMonth);
+      if(Object.keys(store).length){
+        entries[keyFor(curYear,curMonth)] = store;
+        render();
+        persist(false);
+        showStatus("Built from work schedule ✓");
+      } else {
+        dropSnapshot();
+      }
+      return;
+    }
     var src = bestFillSource();
     if(!src) return;
     snapshot();
@@ -606,7 +1071,7 @@
     persist(false);
     curYear = y; curMonth = m;
     render();
-    autoFillIfEmpty();
+    materializeIfEmpty();
   }
 
   // Auto-save while typing in any day cell or the header note
@@ -646,15 +1111,183 @@
 
   document.getElementById("saveBtn").onclick = function(){ persist(true); };
 
-  // ---------- Backup: export / import all calendars as a JSON file ----------
+  // ---------- Share the month as a PDF (text it from a phone) ----------
+  function cssColorToRgb(c){
+    if(!c) return null;
+    var m = String(c).match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+    if(m) return [ +m[1], +m[2], +m[3] ];
+    m = String(c).match(/^#([0-9a-f]{6})$/i);
+    if(m){ var n = parseInt(m[1],16); return [ (n>>16)&255, (n>>8)&255, n&255 ]; }
+    return null;
+  }
+
+  // Flatten a day cell's HTML into lines of {text, bg, dim}
+  function entryLines(html){
+    var tmp = document.createElement("div");
+    tmp.innerHTML = html || "";
+    var lines = [];
+    var cur = null;
+    function push(){
+      if(cur && cur.text.replace(/​/g,"").trim()) lines.push(cur);
+      cur = { text:"", bg:null, dim:false };
+    }
+    push();
+    function walk(node){
+      node.childNodes.forEach(function(ch){
+        if(ch.nodeType === 3){
+          cur.text += ch.textContent;
+        } else if(ch.tagName === "BR"){
+          push();
+        } else if(ch.tagName === "DIV" || ch.tagName === "P"){
+          push();
+          walk(ch);
+          push();
+        } else {
+          var bg = ch.style && ch.style.backgroundColor;
+          if(bg && cur.text.trim() === "") cur.bg = bg;
+          if(ch.classList && ch.classList.contains("pto-off")) cur.dim = true;
+          walk(ch);
+        }
+      });
+    }
+    walk(tmp);
+    push();
+    return lines;
+  }
+
+  function buildPdf(){
+    var jsPDF = window.jspdf.jsPDF;
+    var doc = new jsPDF({ orientation:"landscape", unit:"pt", format:"letter" });
+    var pageW = doc.internal.pageSize.getWidth();
+    var pageH = doc.internal.pageSize.getHeight();
+    var margin = 28;
+
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(20);
+    doc.setTextColor(26,35,50);
+    doc.text(MONTHS[curMonth] + " " + curYear, margin, margin + 16);
+
+    var noteText = noteEl.innerText.replace(/​/g,"").trim();
+    if(noteText){
+      doc.setFont("helvetica","normal");
+      doc.setFontSize(10);
+      doc.setTextColor(138,147,161);
+      doc.text(noteText, pageW - margin, margin + 16, {align:"right"});
+    }
+
+    var store = entries[keyFor(curYear,curMonth)] || {};
+    var firstDow = new Date(curYear,curMonth,1).getDay();
+    var daysInMonth = new Date(curYear,curMonth+1,0).getDate();
+    var weeks = Math.ceil((firstDow + daysInMonth) / 7);
+
+    var top = margin + 30;
+    var headH = 18;
+    var gridW = pageW - margin*2;
+    var colW = gridW / 7;
+    var rowH = (pageH - top - headH - margin) / weeks;
+
+    // weekday header
+    doc.setFillColor(244,247,245);
+    doc.rect(margin, top, gridW, headH, "F");
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(9);
+    doc.setTextColor(46,94,78);
+    var DOWS = ["SUN","MON","TUE","WED","THU","FRI","SAT"];
+    for(var i=0;i<7;i++){
+      doc.text(DOWS[i], margin + i*colW + colW/2, top + 12.5, {align:"center"});
+    }
+
+    // grid + content
+    doc.setDrawColor(200,204,212);
+    var day = 1;
+    for(var w=0; w<weeks; w++){
+      for(var c=0; c<7; c++){
+        var x = margin + c*colW;
+        var yTop = top + headH + w*rowH;
+        var isBlank = (w===0 && c<firstDow) || day > daysInMonth;
+        if(isBlank){
+          doc.setFillColor(250,251,252);
+          doc.rect(x, yTop, colW, rowH, "F");
+        } else {
+          doc.setFont("helvetica","bold");
+          doc.setFontSize(9);
+          doc.setTextColor(26,35,50);
+          doc.text(String(day), x + 5, yTop + 12);
+
+          var lines = entryLines(store[day]);
+          var lineH = 10.5;
+          var maxLines = Math.floor((rowH - 18) / lineH);
+          var shown = lines.length > maxLines ? maxLines - 1 : lines.length;
+          doc.setFontSize(7.5);
+          for(var li=0; li<shown; li++){
+            var ln = lines[li];
+            var ty = yTop + 22 + li*lineH;
+            var t = ln.text.replace(/\s+/g," ").trim();
+            while(t.length > 1 && doc.getTextWidth(t) > colW - 10) t = t.slice(0,-1);
+            var rgb = cssColorToRgb(ln.bg);
+            if(rgb){
+              doc.setFillColor(rgb[0], rgb[1], rgb[2]);
+              doc.rect(x + 4, ty - 7.5, Math.min(doc.getTextWidth(t) + 4, colW - 8), lineH - 1, "F");
+            }
+            doc.setFont("helvetica", ln.dim ? "italic" : "normal");
+            if(ln.dim) doc.setTextColor(138,147,161);
+            else doc.setTextColor(26,35,50);
+            doc.text(t, x + 6, ty);
+          }
+          if(lines.length > shown){
+            doc.setFont("helvetica","italic");
+            doc.setTextColor(138,147,161);
+            doc.text("+" + (lines.length - shown) + " more", x + 6, yTop + 22 + shown*lineH);
+          }
+          day++;
+        }
+        doc.rect(x, yTop, colW, rowH, "S");
+      }
+    }
+    // header border
+    doc.rect(margin, top, gridW, headH, "S");
+    return doc.output("blob");
+  }
+
+  document.getElementById("pdfBtn").onclick = function(){
+    persist(false);
+    if(!window.jspdf || !window.jspdf.jsPDF){
+      alert("The PDF library didn't load — check your connection and refresh the page.");
+      return;
+    }
+    var blob = buildPdf();
+    var fname = MONTHS[curMonth] + "-" + curYear + "-schedule.pdf";
+    var file;
+    try{ file = new File([blob], fname, {type:"application/pdf"}); }catch(e){ file = null; }
+    if(file && navigator.canShare && navigator.canShare({files:[file]})){
+      navigator.share({ files:[file], title: MONTHS[curMonth] + " " + curYear + " schedule" })
+        .then(function(){ showStatus("Shared ✓"); })
+        .catch(function(){ /* user closed the share sheet */ });
+    } else {
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = fname;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+      showStatus("PDF downloaded ✓");
+      alert("This device doesn't have a share menu, so the PDF was downloaded instead — attach it to your message. On a phone, this button opens the share menu so you can text it directly.");
+    }
+  };
+
+  // ---------- Backup: export / import everything as a JSON file ----------
   document.getElementById("exportBtn").onclick = function(){
     persist(false);
     var payload = {
       app: "printable-calendar",
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       entries: entries,
       notes: notes,
+      employees: employees,
+      pto: pto,
+      nextId: nextId,
       font: fontSel.value,
       size: sizeSel.value
     };
@@ -689,11 +1322,13 @@
         snapshot();
         entries = data.entries || {};
         notes   = (typeof data.notes === "object" && data.notes) || {};
+        if(Array.isArray(data.employees)) employees = data.employees;
+        if(Array.isArray(data.pto)) pto = data.pto;
+        if(data.nextId) nextId = Math.max(nextId, data.nextId);
         if(data.font){ fontSel.value = data.font; document.documentElement.style.setProperty("--entry-font", data.font); }
         if(data.size){ sizeSel.value = data.size; document.documentElement.style.setProperty("--entry-size", data.size); }
 
         // Jump to a month that actually has entries so the import is visible.
-        // Prefer the current month; otherwise the next month with data; otherwise the latest.
         var withData = monthsWithData();
         if(withData.length && !hasEntries(keyFor(curYear,curMonth))){
           var target = null;
@@ -706,6 +1341,7 @@
           ensureYearOption(curYear);
         }
         render();
+        renderDash();
         persist(false);
         showStatus(withData.length
           ? "Imported ✓ (" + withData.length + " month" + (withData.length>1?"s":"") + ")"
@@ -717,7 +1353,7 @@
     reader.readAsText(file);
   };
 
-  // ---------- Fill the displayed month from another month, matched by weekday ----------
+  // ---------- Fill-by-weekday dialog ----------
   var fillOverlay = document.getElementById("fillOverlay");
   var fillSource  = document.getElementById("fillSource");
   var fillDesc    = document.getElementById("fillDesc");
@@ -790,6 +1426,69 @@
     });
   });
 
+  // ---------- Late / South tap-to-tag modes ----------
+  // Click the button to arm the mode, then click any name on the calendar to
+  // highlight that word. Stays armed for multiple names; click the button
+  // again or press Escape to turn it off.
+  var TAG_MODES = {
+    late:  { color:"#b3e5fc", label:"Late (blue)" },
+    south: { color:"#fff59d", label:"South (yellow)" }
+  };
+  var activeTag = null;
+  var lateBtn = document.getElementById("lateBtn");
+  var southBtn = document.getElementById("southBtn");
+
+  function setTagMode(name){
+    activeTag = (activeTag === name) ? null : name;
+    lateBtn.classList.toggle("active", activeTag === "late");
+    southBtn.classList.toggle("active", activeTag === "south");
+    document.body.classList.toggle("tagging", !!activeTag);
+    if(activeTag) showStatus("Click a name to mark " + TAG_MODES[activeTag].label);
+  }
+  lateBtn.onclick = function(){ setTagMode("late"); };
+  southBtn.onclick = function(){ setTagMode("south"); };
+  document.addEventListener("keydown", function(e){
+    if(e.key === "Escape" && activeTag) setTagMode(activeTag);
+  });
+
+  function caretFromPoint(x,y){
+    if(document.caretPositionFromPoint){
+      var p = document.caretPositionFromPoint(x,y);
+      return p ? {node:p.offsetNode, offset:p.offset} : null;
+    }
+    if(document.caretRangeFromPoint){
+      var r = document.caretRangeFromPoint(x,y);
+      return r ? {node:r.startContainer, offset:r.startOffset} : null;
+    }
+    return null;
+  }
+
+  calBody.addEventListener("click", function(e){
+    if(!activeTag) return;
+    var t = e.target;
+    while(t && t !== calBody && !(t.classList && t.classList.contains("entry"))) t = t.parentNode;
+    if(!t || t === calBody) return;
+    var pos = caretFromPoint(e.clientX, e.clientY);
+    if(!pos || !pos.node || pos.node.nodeType !== 3) return;
+    var text = pos.node.textContent;
+    var isWordChar = function(ch){ return ch && !/[\s,;:()•·—–]/.test(ch); };
+    var a = pos.offset, b = pos.offset;
+    while(a > 0 && isWordChar(text[a-1])) a--;
+    while(b < text.length && isWordChar(text[b])) b++;
+    if(a === b) return;
+    var range = document.createRange();
+    range.setStart(pos.node, a);
+    range.setEnd(pos.node, b);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    snapshot();
+    document.execCommand("styleWithCSS", false, true);
+    document.execCommand("hiliteColor", false, TAG_MODES[activeTag].color);
+    sel.removeAllRanges();
+    persist(true);
+  });
+
   // Font controls
   var fontSel = document.getElementById("fontSel");
   var sizeSel = document.getElementById("sizeSel");
@@ -805,8 +1504,17 @@
   if(saved.font){ fontSel.value = saved.font; if(fontSel.value === saved.font) document.documentElement.style.setProperty("--entry-font", saved.font); }
   if(saved.size){ sizeSel.value = saved.size; if(sizeSel.value === saved.size) document.documentElement.style.setProperty("--entry-size", saved.size); }
 
+  // Show the Team panel automatically until a team exists
+  if(!employees.length) dashPanel.hidden = false;
+
+  renderDash();
   render();
-  autoFillIfEmpty();
+  materializeIfEmpty();
+
+  // Installable web app: register the offline service worker (https or localhost only)
+  if("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")){
+    navigator.serviceWorker.register("./sw.js").catch(function(){ /* offline mode unavailable */ });
+  }
 })();
 </script>
 

@@ -1,0 +1,15 @@
+{
+  "name": "Work Schedule Dashboard",
+  "short_name": "Schedule",
+  "description": "Editable work-schedule calendar with employee block schedules, PTO, and PDF sharing.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#eef0f3",
+  "theme_color": "#2e5e4e",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
