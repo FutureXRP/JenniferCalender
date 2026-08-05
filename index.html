@@ -166,6 +166,17 @@
   }
   .mini:hover{border-color:var(--accent);}
   .mini.danger:hover{border-color:#c0392b;color:#c0392b;}
+  .mini.active{box-shadow:0 0 0 2px var(--accent);border-color:var(--accent);}
+  .emp-row select.emp-status{
+    font:inherit;
+    font-size:13px;
+    padding:5px 6px;
+    border:1px solid var(--line);
+    border-radius:6px;
+    background:var(--paper);
+    color:var(--ink);
+    flex:0 0 auto;
+  }
   .pto-row select, .pto-row input{
     font:inherit;
     font-size:13px;
@@ -400,7 +411,7 @@
   <div class="cols">
     <div class="col">
       <h2>Employees &amp; weekly schedule</h2>
-      <div class="sub">Add each employee and check the days of the week they normally work — the calendar builds itself from this and stays in sync as you make changes here. Once you edit a month by hand, that month is locked in and won't change on its own ("Rebuild this month" refreshes it if you ever want that).</div>
+      <div class="sub">Add each employee, set their status, and check the days of the week they normally work — the calendar builds itself from this and stays in sync as you make changes here. PRN (as-needed) people have no weekly days: click 📍 Pick days, then click calendar days to add or remove them. Once you edit a month by hand, that month is locked in and won't change on its own ("Rebuild this month" refreshes it if you ever want that).</div>
       <div id="empList"></div>
       <div class="actions-row">
         <button class="mini" id="empAdd">＋ Add employee</button>
@@ -483,12 +494,13 @@
             employees: Array.isArray(data.employees) ? data.employees : [],
             pto: Array.isArray(data.pto) ? data.pto : [],
             nextId: data.nextId || 1,
-            generatedMonths: data.generatedMonths || {}
+            generatedMonths: data.generatedMonths || {},
+            prn: data.prn || {}
           };
         }
       }
     }catch(e){ /* corrupted or unavailable storage — start fresh */ }
-    return { entries:{}, notes:{}, font:null, size:null, autoFill:true, employees:[], pto:[], nextId:1, generatedMonths:{} };
+    return { entries:{}, notes:{}, font:null, size:null, autoFill:true, employees:[], pto:[], nextId:1, generatedMonths:{}, prn:{} };
   }
 
   var saved = loadData();
@@ -501,6 +513,9 @@
   // These stay in sync while the team is edited; a month the user has typed in
   // is removed from this set and never rewritten automatically.
   var generatedMonths = saved.generatedMonths;
+  // PRN placements: prn["Y-M-D"] = [empId, ...] — as-needed people added to
+  // individual days. Kept as data so month rebuilds preserve them.
+  var prn = saved.prn;
 
   var saveStatus = document.getElementById("saveStatus");
   var statusTimer = null;
@@ -523,7 +538,8 @@
         employees: employees,
         pto: pto,
         nextId: nextId,
-        generatedMonths: generatedMonths
+        generatedMonths: generatedMonths,
+        prn: prn
       }));
       if(showMsg) showStatus("Saved ✓");
     }catch(e){
@@ -557,6 +573,7 @@
       employees: JSON.parse(JSON.stringify(employees)),
       pto: JSON.parse(JSON.stringify(pto)),
       generatedMonths: JSON.parse(JSON.stringify(generatedMonths)),
+      prn: JSON.parse(JSON.stringify(prn)),
       y: curYear, m: curMonth
     });
     if(undoStack.length > 30) undoStack.shift();
@@ -574,6 +591,7 @@
     employees = s.employees;
     pto = s.pto;
     generatedMonths = s.generatedMonths || {};
+    prn = s.prn || {};
     curYear = s.y; curMonth = s.m;
     ensureYearOption(curYear);
     render();
@@ -697,8 +715,13 @@
 
   function teamActive(){
     return employees.some(function(e){
-      return e.name.trim() && e.days.some(Boolean);
+      return e.name.trim() && (e.status || "ft") !== "prn" && e.days.some(Boolean);
     });
+  }
+
+  function empById(id){
+    for(var i=0;i<employees.length;i++) if(employees[i].id === id) return employees[i];
+    return null;
   }
 
   function dateNum(y,m,d){ return new Date(y,m,d).setHours(0,0,0,0); }
@@ -728,7 +751,7 @@
     var dow = new Date(y,m,d).getDay();
     var parts = [];
     employees.forEach(function(emp){
-      if(!emp.name.trim() || !emp.days[dow]) return;
+      if(!emp.name.trim() || (emp.status || "ft") === "prn" || !emp.days[dow]) return;
       var p = ptoFor(emp.id, y, m, d);
       if(p){
         var cover = (p.cover || "").trim();
@@ -741,6 +764,12 @@
       } else {
         parts.push('<div>' + esc(emp.name) + '</div>');
       }
+    });
+    // PRN (as-needed) people placed on this specific day
+    (prn[y + "-" + m + "-" + d] || []).forEach(function(id){
+      var e = empById(id);
+      if(!e || !e.name.trim()) return;
+      parts.push('<div>' + esc(e.name) + ' <span class="pto-note">PRN</span></div>');
     });
     return parts.join("");
   }
@@ -821,26 +850,57 @@
       name.onchange = function(){ renderDash(); regenAutoMonths(); persist(false); };
       row.appendChild(name);
 
-      var dows = document.createElement("div");
-      dows.className = "dowbox";
-      for(var w=0; w<7; w++){
-        (function(w){
-          var lab = document.createElement("label");
-          var cb = document.createElement("input");
-          cb.type = "checkbox";
-          cb.checked = !!emp.days[w];
-          cb.onchange = function(){
-            snapshot();
-            emp.days[w] = this.checked;
-            regenAutoMonths();
-            persist(true);
-          };
-          lab.appendChild(cb);
-          lab.appendChild(document.createTextNode(DOW_SHORT[w]));
-          dows.appendChild(lab);
-        })(w);
+      var st = document.createElement("select");
+      st.className = "emp-status";
+      st.title = "Employment status — PRN people have no weekly days; you place them on individual days";
+      [["ft","Full time"],["pt","Part time"],["prn","PRN"]].forEach(function(opt){
+        var o = document.createElement("option");
+        o.value = opt[0]; o.textContent = opt[1];
+        st.appendChild(o);
+      });
+      st.value = emp.status || "ft";
+      st.onchange = function(){
+        snapshot();
+        emp.status = this.value;
+        if(prnPlaceId === emp.id && emp.status !== "prn") setPrnPlace(null);
+        renderDash();
+        regenAutoMonths();
+        persist(true);
+      };
+      row.appendChild(st);
+
+      if((emp.status || "ft") === "prn"){
+        var place = document.createElement("button");
+        place.className = "mini place" + (prnPlaceId === emp.id ? " active" : "");
+        place.textContent = "📍 Pick days";
+        place.title = "Click this, then click days on the calendar to add or remove " + (emp.name || "this person") + ". Press Esc or click again to stop.";
+        place.onclick = function(){
+          if(!emp.name.trim()){ alert("Give this person a name first."); return; }
+          setPrnPlace(prnPlaceId === emp.id ? null : emp.id);
+        };
+        row.appendChild(place);
+      } else {
+        var dows = document.createElement("div");
+        dows.className = "dowbox";
+        for(var w=0; w<7; w++){
+          (function(w){
+            var lab = document.createElement("label");
+            var cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.checked = !!emp.days[w];
+            cb.onchange = function(){
+              snapshot();
+              emp.days[w] = this.checked;
+              regenAutoMonths();
+              persist(true);
+            };
+            lab.appendChild(cb);
+            lab.appendChild(document.createTextNode(DOW_SHORT[w]));
+            dows.appendChild(lab);
+          })(w);
+        }
+        row.appendChild(dows);
       }
-      row.appendChild(dows);
 
       var del = document.createElement("button");
       del.className = "mini danger";
@@ -1304,6 +1364,7 @@
       pto: pto,
       nextId: nextId,
       generatedMonths: generatedMonths,
+      prn: prn,
       font: fontSel.value,
       size: sizeSel.value
     };
@@ -1342,6 +1403,7 @@
         if(Array.isArray(data.pto)) pto = data.pto;
         if(data.nextId) nextId = Math.max(nextId, data.nextId);
         generatedMonths = (data.generatedMonths && typeof data.generatedMonths === "object") ? data.generatedMonths : {};
+        prn = (data.prn && typeof data.prn === "object") ? data.prn : {};
         if(data.font){ fontSel.value = data.font; document.documentElement.style.setProperty("--entry-font", data.font); }
         if(data.size){ sizeSel.value = data.size; document.documentElement.style.setProperty("--entry-size", data.size); }
 
@@ -1453,20 +1515,92 @@
     south: { color:"#fff59d", label:"South (yellow)" }
   };
   var activeTag = null;
+  var prnPlaceId = null;   // employee id currently being placed on days
   var lateBtn = document.getElementById("lateBtn");
   var southBtn = document.getElementById("southBtn");
 
-  function setTagMode(name){
-    activeTag = (activeTag === name) ? null : name;
+  function updateModeUI(){
     lateBtn.classList.toggle("active", activeTag === "late");
     southBtn.classList.toggle("active", activeTag === "south");
-    document.body.classList.toggle("tagging", !!activeTag);
+    document.body.classList.toggle("tagging", !!activeTag || !!prnPlaceId);
+  }
+  function setTagMode(name){
+    activeTag = (activeTag === name) ? null : name;
+    if(activeTag && prnPlaceId){ prnPlaceId = null; renderDash(); }
+    updateModeUI();
     if(activeTag) showStatus("Click a name to mark " + TAG_MODES[activeTag].label);
+  }
+  function setPrnPlace(id){
+    prnPlaceId = id;
+    if(id) activeTag = null;
+    updateModeUI();
+    renderDash();
+    if(id){
+      var e = empById(id);
+      showStatus("Click days to add/remove " + (e ? e.name : "") + " — Esc when done");
+    }
   }
   lateBtn.onclick = function(){ setTagMode("late"); };
   southBtn.onclick = function(){ setTagMode("south"); };
   document.addEventListener("keydown", function(e){
-    if(e.key === "Escape" && activeTag) setTagMode(activeTag);
+    if(e.key === "Escape"){
+      if(activeTag) setTagMode(activeTag);
+      if(prnPlaceId) setPrnPlace(null);
+    }
+  });
+
+  // Remove the first line of html whose text is the given name (with or
+  // without the PRN tag) — used when un-placing someone from a hand-edited day.
+  function removeNameLine(html, name){
+    var tmp = document.createElement("div");
+    tmp.innerHTML = html;
+    var norm = function(s){ return String(s).replace(/\s+/g," ").trim(); };
+    var want1 = norm(name), want2 = norm(name + " PRN");
+    for(var i=0;i<tmp.childNodes.length;i++){
+      var n = tmp.childNodes[i];
+      var txt = norm(n.textContent || "");
+      if(txt === want1 || txt === want2){
+        tmp.removeChild(n);
+        return tmp.innerHTML;
+      }
+    }
+    return tmp.innerHTML;
+  }
+
+  function togglePrnOnDay(d){
+    var emp = empById(prnPlaceId);
+    if(!emp || isNaN(d)) return;
+    snapshot();
+    saveCurrentEntries();
+    var dk = curYear + "-" + curMonth + "-" + d;
+    var list = prn[dk] || [];
+    var idx = list.indexOf(emp.id);
+    var removing = idx >= 0;
+    if(removing) list.splice(idx,1); else list.push(emp.id);
+    if(list.length) prn[dk] = list; else delete prn[dk];
+
+    var mkey = keyFor(curYear,curMonth);
+    if(!entries[mkey]) entries[mkey] = {};
+    if(generatedMonths[mkey]){
+      var h = generateDayHTML(curYear,curMonth,d);
+      if(h) entries[mkey][d] = h; else delete entries[mkey][d];
+    } else {
+      var cur = entries[mkey][d] || "";
+      if(removing) cur = removeNameLine(cur, emp.name);
+      else cur = cur + '<div>' + esc(emp.name) + ' <span class="pto-note">PRN</span></div>';
+      if(cur) entries[mkey][d] = cur; else delete entries[mkey][d];
+    }
+    render();
+    persist(true);
+    showStatus((removing ? "Removed " : "Added ") + emp.name + " ✓");
+  }
+
+  calBody.addEventListener("click", function(e){
+    if(!prnPlaceId) return;
+    var t = e.target;
+    while(t && t !== calBody && !(t.classList && t.classList.contains("entry"))) t = t.parentNode;
+    if(!t || t === calBody) return;
+    togglePrnOnDay(parseInt(t.dataset.day,10));
   });
 
   function caretFromPoint(x,y){
@@ -1481,22 +1615,61 @@
     return null;
   }
 
+  // Build a range that covers the whole line (the full name) that was clicked,
+  // leaving out trailing notes like "(for X)" or "PRN".
+  function lineRangeForNode(node, entry){
+    var isBlock = function(n){ return n.nodeType === 1 && (n.tagName === "DIV" || n.tagName === "P" || n.tagName === "BR"); };
+    var isNote = function(n){
+      return n.nodeType === 1 && n.classList &&
+             (n.classList.contains("pto-note") || n.classList.contains("pto-off"));
+    };
+    var isBlank = function(n){ return n.nodeType === 3 && !n.textContent.trim(); };
+
+    // The block the click landed in: nearest DIV/P inside the entry, else the entry itself
+    var block = node.nodeType === 3 ? node.parentNode : node;
+    while(block && block !== entry && !(block.nodeType === 1 && (block.tagName === "DIV" || block.tagName === "P"))){
+      block = block.parentNode;
+    }
+
+    var range = document.createRange();
+    if(block && block !== entry){
+      // Whole div line: start at its first child, end before any trailing note
+      var kids = block.childNodes;
+      if(!kids.length) return null;
+      var endIdx = kids.length;
+      for(var i=0;i<kids.length;i++){
+        if(isNote(kids[i])){ endIdx = i; break; }
+      }
+      while(endIdx > 0 && isBlank(kids[endIdx-1])) endIdx--;
+      if(endIdx === 0) return null;
+      range.setStart(block, 0);
+      range.setEnd(block, endIdx);
+      return range;
+    }
+
+    // Bare first line (text directly inside the entry): span the contiguous
+    // run of inline siblings around the clicked node
+    var top = node;
+    while(top.parentNode && top.parentNode !== entry) top = top.parentNode;
+    if(top.parentNode !== entry) return null;
+    var startN = top, endN = top;
+    while(startN.previousSibling && !isBlock(startN.previousSibling)) startN = startN.previousSibling;
+    while(endN.nextSibling && !isBlock(endN.nextSibling) && !isNote(endN.nextSibling)) endN = endN.nextSibling;
+    range.setStartBefore(startN);
+    range.setEndAfter(endN);
+    return range;
+  }
+
   calBody.addEventListener("click", function(e){
     if(!activeTag) return;
     var t = e.target;
     while(t && t !== calBody && !(t.classList && t.classList.contains("entry"))) t = t.parentNode;
     if(!t || t === calBody) return;
     var pos = caretFromPoint(e.clientX, e.clientY);
-    if(!pos || !pos.node || pos.node.nodeType !== 3) return;
-    var text = pos.node.textContent;
-    var isWordChar = function(ch){ return ch && !/[\s,;:()•·—–]/.test(ch); };
-    var a = pos.offset, b = pos.offset;
-    while(a > 0 && isWordChar(text[a-1])) a--;
-    while(b < text.length && isWordChar(text[b])) b++;
-    if(a === b) return;
-    var range = document.createRange();
-    range.setStart(pos.node, a);
-    range.setEnd(pos.node, b);
+    if(!pos || !pos.node) return;
+    if(pos.node.nodeType === 3 && !pos.node.textContent.trim()) return;
+    var range = lineRangeForNode(pos.node, t);
+    if(!range || range.collapsed || !range.toString().trim()) return;
     var sel = window.getSelection();
     sel.removeAllRanges();
     sel.addRange(range);
