@@ -194,6 +194,20 @@
     background:var(--paper);
     color:var(--ink);
   }
+  .pto-row.pending{
+    background:#f4f7f5;
+    outline:1px dashed var(--accent);
+    border-radius:6px;
+    padding:5px;
+  }
+  .mini.confirm{
+    background:var(--accent);
+    border-color:var(--accent);
+    color:#fff;
+    font-weight:600;
+  }
+  .mini.confirm:hover{background:#254c3f;border-color:#254c3f;}
+  .pto-ok{font-size:12px;color:var(--accent);white-space:nowrap;}
   .pto-row input.pto-cover{flex:1 1 110px;min-width:100px;}
   .dash .empty-note{font-size:13px;color:var(--muted);font-style:italic;margin-bottom:8px;}
   .dash .actions-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center;}
@@ -286,7 +300,7 @@
     font-size:14px;
   }
   .pto-note{color:var(--muted);font-size:11px;}
-  .pto-off{color:var(--muted);text-decoration:line-through;}
+  .pto-off{color:var(--muted);}
 
   /* ---------- Fill-by-weekday dialog ---------- */
   .overlay{
@@ -431,7 +445,7 @@
     </div>
     <div class="col">
       <h2>PTO / time off</h2>
-      <div class="sub">When someone is off, their name comes off those days on the calendar. Pick a cover person to put in their slot (or leave it blank to show them as PTO). Only the affected days change — the rest of the month stays as-is.</div>
+      <div class="sub">Pick who's off, the dates, and an optional cover person — nothing touches the calendar until you press ✓ Confirm. On those days the cover joins the working list and the person who's off shows grayed out with "PTO" at the bottom of the day. Press ✕ any time to take the time off back off the calendar.</div>
       <div id="ptoList"></div>
       <div class="actions-row">
         <button class="mini" id="ptoAdd">＋ Add PTO</button>
@@ -746,6 +760,7 @@
     var t = dateNum(y,m,d);
     for(var i=0;i<pto.length;i++){
       var p = pto[i];
+      if(p.confirmed === false) continue;   // drafts don't touch the calendar
       if(p.empId !== empId) continue;
       var a = parseDateStr(p.start), b = parseDateStr(p.end);
       if(a === null || b === null) continue;
@@ -947,7 +962,17 @@
     }
     pto.forEach(function(p){
       var row = document.createElement("div");
-      row.className = "pto-row";
+      row.className = "pto-row" + (p.confirmed === false ? " pending" : "");
+
+      // Editing a confirmed entry takes it off the calendar until it's
+      // confirmed again, so changes never apply mid-edit.
+      function unapplyIfConfirmed(){
+        if(p.confirmed !== false){
+          snapshot();
+          p.confirmed = false;
+          rebuildRange(parseDateStr(p.start), parseDateStr(p.end));
+        }
+      }
 
       var sel = document.createElement("select");
       employees.forEach(function(e){
@@ -958,11 +983,10 @@
         sel.appendChild(o);
       });
       sel.onchange = function(){
-        snapshot();
-        var oldA = parseDateStr(p.start), oldB = parseDateStr(p.end);
+        unapplyIfConfirmed();
         p.empId = this.value;
-        rebuildRange(oldA, oldB);
-        persist(true);
+        renderDash();
+        persist(false);
       };
       row.appendChild(sel);
 
@@ -973,16 +997,11 @@
       end.type = "date";
       end.value = p.end || "";
       function dateChanged(){
-        snapshot();
-        var oldA = parseDateStr(p.start), oldB = parseDateStr(p.end);
+        unapplyIfConfirmed();
         p.start = start.value;
         p.end = end.value || start.value;
-        if(!end.value) end.value = start.value;
-        var newA = parseDateStr(p.start), newB = parseDateStr(p.end);
-        rebuildRange(Math.min(oldA===null?Infinity:oldA, newA===null?Infinity:newA) === Infinity ? newA :
-                     Math.min(oldA===null?newA:oldA, newA===null?oldA:newA),
-                     Math.max(oldB===null?newB:oldB, newB===null?oldB:newB));
-        persist(true);
+        renderDash();
+        persist(false);
       }
       start.onchange = dateChanged;
       end.onchange = dateChanged;
@@ -995,24 +1014,51 @@
       cover.placeholder = "Cover (optional)";
       cover.value = p.cover || "";
       cover.onchange = function(){
-        snapshot();
+        unapplyIfConfirmed();
         p.cover = this.value;
-        rebuildRange(parseDateStr(p.start), parseDateStr(p.end));
-        persist(true);
+        renderDash();
+        persist(false);
       };
       row.appendChild(cover);
+
+      if(p.confirmed === false){
+        var ok = document.createElement("button");
+        ok.className = "mini confirm";
+        ok.textContent = "✓ Confirm";
+        ok.title = "Put this time off on the calendar";
+        ok.onclick = function(){
+          if(!p.start){ alert("Pick a start date first."); return; }
+          if(!p.end) p.end = p.start;
+          snapshot();
+          p.confirmed = true;
+          rebuildRange(parseDateStr(p.start), parseDateStr(p.end));
+          renderDash();
+          persist(true);
+          showStatus("Time off added ✓");
+        };
+        row.appendChild(ok);
+      } else {
+        var badge = document.createElement("span");
+        badge.className = "pto-ok";
+        badge.textContent = "✓ on calendar";
+        row.appendChild(badge);
+      }
 
       var del = document.createElement("button");
       del.className = "mini danger";
       del.textContent = "✕";
-      del.title = "Delete this PTO (those days go back to the normal schedule)";
+      del.title = p.confirmed === false
+        ? "Discard this draft"
+        : "Remove this time off (those days go back to the normal schedule)";
       del.onclick = function(){
-        snapshot();
+        var wasConfirmed = p.confirmed !== false;
+        if(wasConfirmed) snapshot();
         var a = parseDateStr(p.start), b = parseDateStr(p.end);
         pto = pto.filter(function(x){ return x.id !== p.id; });
-        rebuildRange(a, b);
+        if(wasConfirmed) rebuildRange(a, b);
         renderDash();
         persist(true);
+        showStatus(wasConfirmed ? "Time off removed ✓" : "Draft discarded");
       };
       row.appendChild(del);
 
@@ -1042,15 +1088,14 @@
       alert("Add an employee first — PTO is entered per employee.");
       return;
     }
-    snapshot();
     var today = new Date();
     var iso = today.getFullYear() + "-" +
               String(today.getMonth()+1).padStart(2,"0") + "-" +
               String(today.getDate()).padStart(2,"0");
-    pto.push({ id: "p" + (nextId++), empId: employees[0].id, start: iso, end: iso, cover: "" });
-    rebuildRange(parseDateStr(iso), parseDateStr(iso));
+    pto.push({ id: "p" + (nextId++), empId: employees[0].id, start: iso, end: iso, cover: "", confirmed: false });
     renderDash();
-    persist(true);
+    persist(false);
+    showStatus("Set the dates, then press ✓ Confirm");
   };
 
   document.getElementById("rebuildBtn").onclick = function(){
