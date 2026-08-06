@@ -450,8 +450,8 @@
       </div>
     </div>
     <div class="col">
-      <h2>PTO / time off</h2>
-      <div class="sub">Pick who's off, the dates, and an optional cover person — nothing touches the calendar until you press ✓ Confirm. On those days the cover joins the working list and the person who's off shows grayed out with "PTO" at the bottom of the day. Press ✕ any time to take the time off back off the calendar.</div>
+      <h2 id="ptoTitle">PTO / time off</h2>
+      <div class="sub">Pick who's off, the dates, and an optional cover person — nothing touches the calendar until you press ✓ Confirm. This list shows the month you're viewing; time off from other months stays saved as history and never carries into a new month's schedule. Press ✕ any time to take the time off back off the calendar.</div>
       <div id="ptoList"></div>
       <div class="actions-row">
         <button class="mini" id="ptoAdd">＋ Add PTO</button>
@@ -751,6 +751,7 @@
 
   // ---------- Employees, weekly block schedules, PTO ----------
   var dashPanel = document.getElementById("dashPanel");
+  var showAllPto = false;   // panel shows the viewed month's PTO unless expanded
   var empList = document.getElementById("empList");
   var ptoList = document.getElementById("ptoList");
   var holList = document.getElementById("holList");
@@ -1006,12 +1007,29 @@
 
     updateEmpNames();
 
-    // PTO
-    ptoList.innerHTML = "";
-    if(!pto.length){
-      ptoList.innerHTML = '<div class="empty-note">No PTO entered.</div>';
+    // PTO — scoped to the month being viewed; other months stay in history
+    document.getElementById("ptoTitle").textContent =
+      "PTO / time off — " + MONTHS[curMonth] + " " + curYear;
+    var monthStart = dateNum(curYear, curMonth, 1);
+    var monthEnd = dateNum(curYear, curMonth + 1, 0);
+    function touchesThisMonth(p){
+      var a = parseDateStr(p.start), b = parseDateStr(p.end);
+      if(a === null && b === null) return true;   // no dates yet — keep visible
+      if(a === null) a = b;
+      if(b === null) b = a;
+      if(a > b){ var t = a; a = b; b = t; }
+      return a <= monthEnd && b >= monthStart;
     }
-    pto.forEach(function(p){
+    var visiblePto = pto.filter(function(p){
+      return p.confirmed === false || showAllPto || touchesThisMonth(p);
+    });
+    var hiddenPto = pto.length - visiblePto.length;
+
+    ptoList.innerHTML = "";
+    if(!visiblePto.length){
+      ptoList.innerHTML = '<div class="empty-note">No PTO for ' + MONTHS[curMonth] + " " + curYear + '.</div>';
+    }
+    visiblePto.forEach(function(p){
       var row = document.createElement("div");
 
       // Update this row's look in place — re-rendering the whole panel during
@@ -1120,6 +1138,27 @@
       refreshRow();
       ptoList.appendChild(row);
     });
+
+    if(hiddenPto > 0 || showAllPto){
+      var hist = document.createElement("div");
+      hist.className = "empty-note";
+      var histBtn = document.createElement("button");
+      histBtn.className = "mini";
+      if(showAllPto){
+        hist.textContent = "Showing all saved time off. ";
+        histBtn.textContent = "Show this month only";
+      } else {
+        hist.textContent = hiddenPto + " time-off entr" + (hiddenPto === 1 ? "y" : "ies") +
+          " from other months saved in history. ";
+        histBtn.textContent = "Show all";
+      }
+      histBtn.onclick = function(){
+        showAllPto = !showAllPto;
+        renderDash();
+      };
+      hist.appendChild(histBtn);
+      ptoList.appendChild(hist);
+    }
 
     // Holidays
     holList.innerHTML = "";
@@ -1247,10 +1286,14 @@
       alert("Add an employee first — PTO is entered per employee.");
       return;
     }
+    // New PTO belongs to the month being viewed
     var today = new Date();
-    var iso = today.getFullYear() + "-" +
-              String(today.getMonth()+1).padStart(2,"0") + "-" +
-              String(today.getDate()).padStart(2,"0");
+    var base = (today.getFullYear() === curYear && today.getMonth() === curMonth)
+      ? today
+      : new Date(curYear, curMonth, 1);
+    var iso = base.getFullYear() + "-" +
+              String(base.getMonth()+1).padStart(2,"0") + "-" +
+              String(base.getDate()).padStart(2,"0");
     pto.push({ id: "p" + (nextId++), empId: employees[0].id, start: iso, end: iso, cover: "", confirmed: false });
     renderDash();
     persist(false);
@@ -1364,6 +1407,7 @@
     curYear = y; curMonth = m;
     render();
     materializeIfEmpty();
+    renderDash();   // the PTO panel follows the month being viewed
   }
 
   // Auto-save while typing in any day cell or the header note. A hand-edited
