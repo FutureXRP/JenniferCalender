@@ -287,12 +287,16 @@
     font-family:var(--entry-font);
     font-size:var(--entry-size);
     line-height:1.4;
-    padding:2px 8px 8px 8px;
-    min-height:70px;
+    padding:2px 8px 6px 8px;
+    min-height:82px;
     outline:none;
     word-wrap:break-word;
     white-space:pre-wrap;
+    display:flex;
+    flex-direction:column;
   }
+  /* People on PTO sit at the very bottom of the day box */
+  .entry .pto-bottom{margin-top:auto;padding-top:4px;}
   .entry:focus{background:#f2f8f5;}
   .entry:empty::before{
     content:"+";
@@ -354,6 +358,7 @@
       padding:0;
     }
     tbody td{height:95px;}
+    .entry{min-height:67px;}
     .entry:empty::before{content:"";}
     .entry:focus{background:transparent;}
     .cal-note:empty{display:none;}
@@ -836,7 +841,10 @@
       if(!e || !e.name.trim()) return;
       parts.push('<div>' + esc(e.name) + ' <span class="pto-note">PRN</span></div>');
     });
-    return parts.concat(offParts).join("");
+    if(offParts.length){
+      parts.push('<div class="pto-bottom">' + offParts.join("") + '</div>');
+    }
+    return parts.join("");
   }
 
   function generateMonth(y,m){
@@ -1410,36 +1418,41 @@
     return null;
   }
 
-  // Flatten a day cell's HTML into lines of {text, bg, dim}
+  // Flatten a day cell's HTML into lines of {text, bg, dim, bottom}
   function entryLines(html){
     var tmp = document.createElement("div");
     tmp.innerHTML = html || "";
     var lines = [];
     var cur = null;
+    var curBottom = false;
     function push(){
       if(cur && cur.text.replace(/​/g,"").trim()) lines.push(cur);
-      cur = { text:"", bg:null, dim:false };
+      cur = { text:"", bg:null, dim:false, bottom:curBottom };
     }
     push();
-    function walk(node){
+    function walk(node, bottom){
       node.childNodes.forEach(function(ch){
         if(ch.nodeType === 3){
           cur.text += ch.textContent;
+          if(bottom) cur.bottom = true;
         } else if(ch.tagName === "BR"){
           push();
         } else if(ch.tagName === "DIV" || ch.tagName === "P"){
+          var b = bottom || (ch.classList && ch.classList.contains("pto-bottom"));
           push();
-          walk(ch);
+          curBottom = b;
+          walk(ch, b);
           push();
+          curBottom = bottom;
         } else {
           var bg = ch.style && ch.style.backgroundColor;
           if(bg && cur.text.trim() === "") cur.bg = bg;
           if(ch.classList && ch.classList.contains("pto-off")) cur.dim = true;
-          walk(ch);
+          walk(ch, bottom);
         }
       });
     }
-    walk(tmp);
+    walk(tmp, false);
     push();
     return lines;
   }
@@ -1503,14 +1516,13 @@
           doc.setTextColor(26,35,50);
           doc.text(String(day), x + 5, yTop + 12);
 
-          var lines = entryLines(store[day]);
+          var allLines = entryLines(store[day]);
+          var topLines = allLines.filter(function(l){ return !l.bottom; });
+          var botLines = allLines.filter(function(l){ return l.bottom; });
           var lineH = 10.5;
-          var maxLines = Math.floor((rowH - 18) / lineH);
-          var shown = lines.length > maxLines ? maxLines - 1 : lines.length;
           doc.setFontSize(7.5);
-          for(var li=0; li<shown; li++){
-            var ln = lines[li];
-            var ty = yTop + 22 + li*lineH;
+
+          function drawLine(ln, ty){
             var t = ln.text.replace(/\s+/g," ").trim();
             while(t.length > 1 && doc.getTextWidth(t) > colW - 10) t = t.slice(0,-1);
             var rgb = cssColorToRgb(ln.bg);
@@ -1523,10 +1535,22 @@
             else doc.setTextColor(26,35,50);
             doc.text(t, x + 6, ty);
           }
-          if(lines.length > shown){
+
+          // PTO lines pin to the bottom of the cell, like on screen
+          var botStart = yTop + rowH - 5 - (botLines.length ? (botLines.length - 1) * lineH : 0);
+          var maxLines = Math.floor((rowH - 18 - botLines.length * lineH) / lineH);
+          if(maxLines < 0) maxLines = 0;
+          var shown = topLines.length > maxLines ? Math.max(maxLines - 1, 0) : topLines.length;
+          for(var li=0; li<shown; li++){
+            drawLine(topLines[li], yTop + 22 + li*lineH);
+          }
+          if(topLines.length > shown){
             doc.setFont("helvetica","italic");
             doc.setTextColor(138,147,161);
-            doc.text("+" + (lines.length - shown) + " more", x + 6, yTop + 22 + shown*lineH);
+            doc.text("+" + (topLines.length - shown) + " more", x + 6, yTop + 22 + shown*lineH);
+          }
+          for(var bi=0; bi<botLines.length; bi++){
+            drawLine(botLines[bi], botStart + bi*lineH);
           }
           day++;
         }
