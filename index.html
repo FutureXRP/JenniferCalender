@@ -301,6 +301,7 @@
   }
   .pto-note{color:var(--muted);font-size:11px;}
   .pto-off{color:var(--muted);}
+  .holiday-name{color:var(--accent);font-weight:700;}
 
   /* ---------- Fill-by-weekday dialog ---------- */
   .overlay{
@@ -451,6 +452,14 @@
         <button class="mini" id="ptoAdd">＋ Add PTO</button>
       </div>
     </div>
+    <div class="col">
+      <h2>Holidays</h2>
+      <div class="sub">On a holiday only the two people you pick work — everyone else is off that day. Nothing changes until you press ✓ Confirm; ✕ removes the holiday and brings back the normal schedule.</div>
+      <div id="holList"></div>
+      <div class="actions-row">
+        <button class="mini" id="holAdd">＋ Add holiday</button>
+      </div>
+    </div>
   </div>
   <datalist id="empNames"></datalist>
 </div>
@@ -520,12 +529,13 @@
             pto: Array.isArray(data.pto) ? data.pto : [],
             nextId: data.nextId || 1,
             generatedMonths: data.generatedMonths || {},
-            prn: data.prn || {}
+            prn: data.prn || {},
+            holidays: Array.isArray(data.holidays) ? data.holidays : []
           };
         }
       }
     }catch(e){ /* corrupted or unavailable storage — start fresh */ }
-    return { entries:{}, notes:{}, font:null, size:null, autoFill:true, employees:[], pto:[], nextId:1, generatedMonths:{}, prn:{} };
+    return { entries:{}, notes:{}, font:null, size:null, autoFill:true, employees:[], pto:[], nextId:1, generatedMonths:{}, prn:{}, holidays:[] };
   }
 
   var saved = loadData();
@@ -541,6 +551,9 @@
   // PRN placements: prn["Y-M-D"] = [empId, ...] — as-needed people added to
   // individual days. Kept as data so month rebuilds preserve them.
   var prn = saved.prn;
+  // Holidays: [{id, date:"YYYY-MM-DD", label, w1, w2, confirmed}] — on a
+  // holiday only the two chosen people work.
+  var holidays = saved.holidays;
 
   var saveStatus = document.getElementById("saveStatus");
   var statusTimer = null;
@@ -564,7 +577,8 @@
         pto: pto,
         nextId: nextId,
         generatedMonths: generatedMonths,
-        prn: prn
+        prn: prn,
+        holidays: holidays
       }));
       if(showMsg) showStatus("Saved ✓");
     }catch(e){
@@ -599,6 +613,7 @@
       pto: JSON.parse(JSON.stringify(pto)),
       generatedMonths: JSON.parse(JSON.stringify(generatedMonths)),
       prn: JSON.parse(JSON.stringify(prn)),
+      holidays: JSON.parse(JSON.stringify(holidays)),
       y: curYear, m: curMonth
     });
     if(undoStack.length > 30) undoStack.shift();
@@ -617,6 +632,7 @@
     pto = s.pto;
     generatedMonths = s.generatedMonths || {};
     prn = s.prn || {};
+    holidays = s.holidays || [];
     curYear = s.y; curMonth = s.m;
     ensureYearOption(curYear);
     render();
@@ -732,6 +748,7 @@
   var dashPanel = document.getElementById("dashPanel");
   var empList = document.getElementById("empList");
   var ptoList = document.getElementById("ptoList");
+  var holList = document.getElementById("holList");
   var empNames = document.getElementById("empNames");
 
   function esc(s){
@@ -773,7 +790,29 @@
   // The generated content for one day: everyone scheduled that weekday,
   // with PTO swaps applied. Names are plain text — highlights are added by
   // hand afterwards with the Late/South buttons or the color swatches.
+  function holidayFor(y,m,d){
+    var t = dateNum(y,m,d);
+    for(var i=0;i<holidays.length;i++){
+      var h = holidays[i];
+      if(h.confirmed === false) continue;
+      if(parseDateStr(h.date) === t) return h;
+    }
+    return null;
+  }
+
   function generateDayHTML(y,m,d){
+    // Holidays override the whole day: only the two chosen people work
+    var hol = holidayFor(y,m,d);
+    if(hol){
+      var hParts = [];
+      if((hol.label || "").trim()) hParts.push('<div class="holiday-name">' + esc(hol.label.trim()) + '</div>');
+      [hol.w1, hol.w2].forEach(function(w){
+        w = (w || "").trim();
+        if(w) hParts.push('<div>' + esc(w) + '</div>');
+      });
+      return hParts.join("");
+    }
+
     var dow = new Date(y,m,d).getDay();
     var parts = [];
     var offParts = [];   // people scheduled off go at the bottom of the box
@@ -858,6 +897,17 @@
     if(touchedVisible) render();
   }
 
+  // Refresh the cover/worker name suggestions without re-rendering the panel
+  function updateEmpNames(){
+    empNames.innerHTML = "";
+    employees.forEach(function(e){
+      if(!e.name.trim()) return;
+      var o = document.createElement("option");
+      o.value = e.name;
+      empNames.appendChild(o);
+    });
+  }
+
   function renderDash(){
     // Employees
     empList.innerHTML = "";
@@ -873,7 +923,7 @@
       name.placeholder = "Name";
       name.value = emp.name;
       name.oninput = function(){ emp.name = this.value; };
-      name.onchange = function(){ renderDash(); regenAutoMonths(); persist(false); };
+      name.onchange = function(){ updateEmpNames(); regenAutoMonths(); persist(false); };
       row.appendChild(name);
 
       var st = document.createElement("select");
@@ -946,14 +996,7 @@
       empList.appendChild(row);
     });
 
-    // datalist for cover suggestions
-    empNames.innerHTML = "";
-    employees.forEach(function(e){
-      if(!e.name.trim()) return;
-      var o = document.createElement("option");
-      o.value = e.name;
-      empNames.appendChild(o);
-    });
+    updateEmpNames();
 
     // PTO
     ptoList.innerHTML = "";
@@ -962,7 +1005,15 @@
     }
     pto.forEach(function(p){
       var row = document.createElement("div");
-      row.className = "pto-row" + (p.confirmed === false ? " pending" : "");
+
+      // Update this row's look in place — re-rendering the whole panel during
+      // an edit would steal focus from the field being typed in.
+      function refreshRow(){
+        var pending = p.confirmed === false;
+        row.className = "pto-row" + (pending ? " pending" : "");
+        ok.style.display = pending ? "" : "none";
+        badge.style.display = pending ? "none" : "";
+      }
 
       // Editing a confirmed entry takes it off the calendar until it's
       // confirmed again, so changes never apply mid-edit.
@@ -971,6 +1022,7 @@
           snapshot();
           p.confirmed = false;
           rebuildRange(parseDateStr(p.start), parseDateStr(p.end));
+          refreshRow();
         }
       }
 
@@ -985,7 +1037,6 @@
       sel.onchange = function(){
         unapplyIfConfirmed();
         p.empId = this.value;
-        renderDash();
         persist(false);
       };
       row.appendChild(sel);
@@ -1000,7 +1051,7 @@
         unapplyIfConfirmed();
         p.start = start.value;
         p.end = end.value || start.value;
-        renderDash();
+        if(!end.value) end.value = p.end;
         persist(false);
       }
       start.onchange = dateChanged;
@@ -1013,43 +1064,39 @@
       cover.setAttribute("list","empNames");
       cover.placeholder = "Cover (optional)";
       cover.value = p.cover || "";
+      cover.oninput = function(){ p.cover = this.value; };
       cover.onchange = function(){
         unapplyIfConfirmed();
         p.cover = this.value;
-        renderDash();
         persist(false);
       };
       row.appendChild(cover);
 
-      if(p.confirmed === false){
-        var ok = document.createElement("button");
-        ok.className = "mini confirm";
-        ok.textContent = "✓ Confirm";
-        ok.title = "Put this time off on the calendar";
-        ok.onclick = function(){
-          if(!p.start){ alert("Pick a start date first."); return; }
-          if(!p.end) p.end = p.start;
-          snapshot();
-          p.confirmed = true;
-          rebuildRange(parseDateStr(p.start), parseDateStr(p.end));
-          renderDash();
-          persist(true);
-          showStatus("Time off added ✓");
-        };
-        row.appendChild(ok);
-      } else {
-        var badge = document.createElement("span");
-        badge.className = "pto-ok";
-        badge.textContent = "✓ on calendar";
-        row.appendChild(badge);
-      }
+      var ok = document.createElement("button");
+      ok.className = "mini confirm";
+      ok.textContent = "✓ Confirm";
+      ok.title = "Put this time off on the calendar";
+      ok.onclick = function(){
+        if(!p.start){ alert("Pick a start date first."); return; }
+        if(!p.end) p.end = p.start;
+        snapshot();
+        p.confirmed = true;
+        rebuildRange(parseDateStr(p.start), parseDateStr(p.end));
+        refreshRow();
+        persist(true);
+        showStatus("Time off added ✓");
+      };
+      row.appendChild(ok);
+
+      var badge = document.createElement("span");
+      badge.className = "pto-ok";
+      badge.textContent = "✓ on calendar";
+      row.appendChild(badge);
 
       var del = document.createElement("button");
       del.className = "mini danger";
       del.textContent = "✕";
-      del.title = p.confirmed === false
-        ? "Discard this draft"
-        : "Remove this time off (those days go back to the normal schedule)";
+      del.title = "Remove this time off (those days go back to the normal schedule)";
       del.onclick = function(){
         var wasConfirmed = p.confirmed !== false;
         if(wasConfirmed) snapshot();
@@ -1062,7 +1109,111 @@
       };
       row.appendChild(del);
 
+      refreshRow();
       ptoList.appendChild(row);
+    });
+
+    // Holidays
+    holList.innerHTML = "";
+    if(!holidays.length){
+      holList.innerHTML = '<div class="empty-note">No holidays entered.</div>';
+    }
+    holidays.forEach(function(h){
+      var row = document.createElement("div");
+
+      function refreshRow(){
+        var pending = h.confirmed === false;
+        row.className = "pto-row" + (pending ? " pending" : "");
+        ok.style.display = pending ? "" : "none";
+        badge.style.display = pending ? "none" : "";
+      }
+
+      function unapplyIfConfirmed(){
+        if(h.confirmed !== false){
+          snapshot();
+          h.confirmed = false;
+          var t = parseDateStr(h.date);
+          rebuildRange(t, t);
+          refreshRow();
+        }
+      }
+
+      var date = document.createElement("input");
+      date.type = "date";
+      date.value = h.date || "";
+      date.onchange = function(){
+        unapplyIfConfirmed();
+        h.date = this.value;
+        persist(false);
+      };
+      row.appendChild(date);
+
+      var label = document.createElement("input");
+      label.className = "pto-cover";
+      label.placeholder = "Holiday name";
+      label.value = h.label || "";
+      label.oninput = function(){ h.label = this.value; };
+      label.onchange = function(){
+        unapplyIfConfirmed();
+        h.label = this.value;
+        persist(false);
+      };
+      row.appendChild(label);
+
+      [["w1","Worker 1"],["w2","Worker 2"]].forEach(function(spec){
+        var inp = document.createElement("input");
+        inp.className = "pto-cover";
+        inp.setAttribute("list","empNames");
+        inp.placeholder = spec[1];
+        inp.value = h[spec[0]] || "";
+        inp.oninput = function(){ h[spec[0]] = this.value; };
+        inp.onchange = function(){
+          unapplyIfConfirmed();
+          h[spec[0]] = this.value;
+          persist(false);
+        };
+        row.appendChild(inp);
+      });
+
+      var ok = document.createElement("button");
+      ok.className = "mini confirm";
+      ok.textContent = "✓ Confirm";
+      ok.title = "Put this holiday on the calendar";
+      ok.onclick = function(){
+        if(!h.date){ alert("Pick the holiday's date first."); return; }
+        snapshot();
+        h.confirmed = true;
+        var t = parseDateStr(h.date);
+        rebuildRange(t, t);
+        refreshRow();
+        persist(true);
+        showStatus("Holiday added ✓");
+      };
+      row.appendChild(ok);
+
+      var badge = document.createElement("span");
+      badge.className = "pto-ok";
+      badge.textContent = "✓ on calendar";
+      row.appendChild(badge);
+
+      var del = document.createElement("button");
+      del.className = "mini danger";
+      del.textContent = "✕";
+      del.title = "Remove this holiday (the day goes back to the normal schedule)";
+      del.onclick = function(){
+        var wasConfirmed = h.confirmed !== false;
+        if(wasConfirmed) snapshot();
+        var t = parseDateStr(h.date);
+        holidays = holidays.filter(function(x){ return x.id !== h.id; });
+        if(wasConfirmed) rebuildRange(t, t);
+        renderDash();
+        persist(true);
+        showStatus(wasConfirmed ? "Holiday removed ✓" : "Draft discarded");
+      };
+      row.appendChild(del);
+
+      refreshRow();
+      holList.appendChild(row);
     });
   }
 
@@ -1096,6 +1247,13 @@
     renderDash();
     persist(false);
     showStatus("Set the dates, then press ✓ Confirm");
+  };
+
+  document.getElementById("holAdd").onclick = function(){
+    holidays.push({ id: "h" + (nextId++), date: "", label: "", w1: "", w2: "", confirmed: false });
+    renderDash();
+    persist(false);
+    showStatus("Pick the date and workers, then press ✓ Confirm");
   };
 
   document.getElementById("rebuildBtn").onclick = function(){
@@ -1421,6 +1579,7 @@
       nextId: nextId,
       generatedMonths: generatedMonths,
       prn: prn,
+      holidays: holidays,
       font: fontSel.value,
       size: sizeSel.value
     };
@@ -1460,6 +1619,7 @@
         if(data.nextId) nextId = Math.max(nextId, data.nextId);
         generatedMonths = (data.generatedMonths && typeof data.generatedMonths === "object") ? data.generatedMonths : {};
         prn = (data.prn && typeof data.prn === "object") ? data.prn : {};
+        holidays = Array.isArray(data.holidays) ? data.holidays : [];
         if(data.font){ fontSel.value = data.font; document.documentElement.style.setProperty("--entry-font", data.font); }
         if(data.size){ sizeSel.value = data.size; document.documentElement.style.setProperty("--entry-size", data.size); }
 
@@ -1732,6 +1892,16 @@
   textModeBtn.onclick = function(){ setSelectMode(false); };
   selectModeBtn.onclick = function(){ setSelectMode(true); };
 
+  var lastSelectBlock = null;   // line selected by the last select-mode click
+
+  function blockOfNode(node, entry){
+    var b = node.nodeType === 3 ? node.parentNode : node;
+    while(b && b !== entry && !(b.nodeType === 1 && (b.tagName === "DIV" || b.tagName === "P"))){
+      b = b.parentNode;
+    }
+    return b || entry;
+  }
+
   calBody.addEventListener("click", function(e){
     if(!selectMode || activeTag || prnPlaceId) return;
     var t = e.target;
@@ -1739,11 +1909,43 @@
     if(!t || t === calBody) return;
     var pos = caretFromPoint(e.clientX, e.clientY);
     if(!pos || !pos.node) return;
+
+    var block = blockOfNode(pos.node, t);
+    var sel = window.getSelection();
+
+    // Second click on the name that's already selected: place the cursor
+    // there so a new name can be typed before or after the person.
+    if(lastSelectBlock && lastSelectBlock === block && sel && !sel.isCollapsed){
+      var caret = document.createRange();
+      var off = pos.node.nodeType === 3 ? Math.min(pos.offset, pos.node.textContent.length) : pos.offset;
+      caret.setStart(pos.node, off);
+      caret.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(caret);
+      lastSelectBlock = null;
+      showStatus("Cursor placed — type away");
+      return;
+    }
+
     var range = lineRangeForNode(pos.node, t);
     if(!range || range.collapsed || !range.toString().trim()) return;
-    var sel = window.getSelection();
     sel.removeAllRanges();
     sel.addRange(range);
+    lastSelectBlock = block;
+  });
+
+  // Typing while a whole name is selected (select mode) adds the typed text
+  // on a new line below the person instead of replacing them.
+  calBody.addEventListener("beforeinput", function(e){
+    if(!selectMode) return;
+    var sel = window.getSelection();
+    if(!sel || !sel.rangeCount || sel.isCollapsed) return;
+    if(e.inputType !== "insertText" && e.inputType !== "insertParagraph") return;
+    e.preventDefault();
+    sel.collapseToEnd();
+    document.execCommand("insertHTML", false,
+      "<div>" + (e.inputType === "insertText" ? esc(e.data || "") : "<br>") + "</div>");
+    lastSelectBlock = null;
   });
 
   calBody.addEventListener("click", function(e){
