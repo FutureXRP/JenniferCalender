@@ -297,6 +297,9 @@
   }
   /* People on PTO sit at the very bottom of the day box */
   .entry .pto-bottom{margin-top:auto;padding-top:4px;}
+  /* A top-level span is a flex item; keep it hugging its letters so a
+     highlight can never stretch across the whole day */
+  .entry > span{align-self:flex-start;}
   .entry:focus{background:#f2f8f5;}
   .entry:empty::before{
     content:"+";
@@ -738,7 +741,7 @@
           entry.contentEditable = "true";
           entry.spellcheck = false;
           entry.dataset.day = day;
-          if(store[day]) entry.innerHTML = store[day];
+          if(store[day]) entry.innerHTML = normalizeEntryHTML(store[day]);
           td.appendChild(num);
           td.appendChild(entry);
           day++;
@@ -1784,8 +1787,13 @@
         return;
       }
       snapshot();
-      document.execCommand("styleWithCSS", false, true);
-      document.execCommand("hiliteColor", false, this.dataset.color || "transparent");
+      if(!applyHighlight(this.dataset.color || "")){
+        dropSnapshot();
+        return;
+      }
+      // Let the next click re-select this name (instead of dropping a caret)
+      // so its color can be changed or removed straight away.
+      lastSelectBlock = null;
       persist(true);
     });
   });
@@ -1903,10 +1911,7 @@
   // leaving out trailing notes like "(for X)" or "PRN".
   function lineRangeForNode(node, entry){
     var isBlock = function(n){ return n.nodeType === 1 && (n.tagName === "DIV" || n.tagName === "P" || n.tagName === "BR"); };
-    var isNote = function(n){
-      return n.nodeType === 1 && n.classList &&
-             (n.classList.contains("pto-note") || n.classList.contains("pto-off"));
-    };
+    var isNote = isNoteEl;
     var isBlank = function(n){ return n.nodeType === 3 && !n.textContent.trim(); };
 
     // The block the click landed in: nearest DIV/P inside the entry, else the entry itself
@@ -1942,6 +1947,186 @@
     range.setStartBefore(startN);
     range.setEndAfter(endN);
     return range;
+  }
+
+  // ---------- Highlight engine ----------
+  // A highlight is an inline span wrapped around the exact letters. The color
+  // must never land on a line box — a DIV, or a direct child of .entry, which
+  // is a flex item and would paint the full width of the day.
+
+  function entryOf(node){
+    var n = (node && node.nodeType === 3) ? node.parentNode : node;
+    while(n && n !== document.body){
+      if(n.classList && (n.classList.contains("entry") || n.classList.contains("cal-note"))) return n;
+      n = n.parentNode;
+    }
+    return null;
+  }
+
+  function isBlockEl(n){
+    return !!n && n.nodeType === 1 && (n.tagName === "DIV" || n.tagName === "P");
+  }
+
+  // Trailing markers like "PTO", "PRN" or "(for X)" — never part of a name.
+  // The grayed .pto-off wrapper holds the name itself, so it is not a note.
+  function isNoteEl(n){
+    return !!n && n.nodeType === 1 && n.classList && n.classList.contains("pto-note");
+  }
+
+  // Split `parent` so `child` becomes its only child, with clones holding the
+  // siblings that came before and after it.
+  function splitOutChild(parent, child){
+    if(child.previousSibling){
+      var before = parent.cloneNode(false);
+      while(parent.firstChild && parent.firstChild !== child) before.appendChild(parent.firstChild);
+      parent.parentNode.insertBefore(before, parent);
+    }
+    if(child.nextSibling){
+      var after = parent.cloneNode(false);
+      while(child.nextSibling) after.appendChild(child.nextSibling);
+      parent.parentNode.insertBefore(after, parent.nextSibling);
+    }
+  }
+
+  // Strip any background painted on this node's ancestors, splitting inline
+  // wrappers so only this node loses the color.
+  function clearHighlightAround(node, root){
+    var chain = [];
+    var p = node.parentNode;
+    while(p && p !== root){ chain.push(p); p = p.parentNode; }
+    var child = node;
+    chain.forEach(function(el){
+      if(!el.parentNode) return;
+      if(!el.style || !el.style.backgroundColor){ child = el; return; }
+      if(isBlockEl(el)){
+        el.style.backgroundColor = "";        // a whole line never carries color
+      } else {
+        splitOutChild(el, child);
+        el.style.backgroundColor = "";
+      }
+      if(!el.getAttribute("style")) el.removeAttribute("style");
+      if(el.tagName === "SPAN" && !el.attributes.length){
+        var par = el.parentNode;
+        while(el.firstChild) par.insertBefore(el.firstChild, el);
+        par.removeChild(el);
+        return;                                // `child` now sits directly in `par`
+      }
+      child = el;
+    });
+    if(root.style && root.style.backgroundColor) root.style.backgroundColor = "";
+  }
+
+  function nodeInRange(range, node){
+    if(range.intersectsNode) return range.intersectsNode(node);
+    try{
+      return range.comparePoint(node, 0) <= 0 &&
+             range.comparePoint(node, node.textContent.length) >= 0;
+    }catch(e){ return true; }
+  }
+
+  // The text the selection actually covers, trimmed to the exact letters at
+  // each end. Interior spaces stay in, so "First Last" gets one solid box.
+  function textFragmentsInRange(range, root){
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+    var items = [], n;
+    while((n = walker.nextNode())){
+      if(!nodeInRange(range, n)) continue;
+      var from = (n === range.startContainer) ? range.startOffset : 0;
+      var to   = (n === range.endContainer)   ? range.endOffset   : n.textContent.length;
+      if(from >= to) continue;
+      items.push({node:n, from:from, to:to});
+    }
+    var blank = function(it){ return !it.node.textContent.slice(it.from, it.to).trim(); };
+    while(items.length && blank(items[0])) items.shift();
+    while(items.length && blank(items[items.length-1])) items.pop();
+    if(items.length){
+      var first = items[0], ft = first.node.textContent;
+      while(first.from < first.to && !ft.charAt(first.from).trim()) first.from++;
+      var last = items[items.length-1], lt = last.node.textContent;
+      while(last.to > last.from && !lt.charAt(last.to-1).trim()) last.to--;
+    }
+    return items;
+  }
+
+  // Paint the selection in `color`, or clear it when color is empty.
+  function applyHighlight(color){
+    var sel = window.getSelection();
+    if(!sel || !sel.rangeCount || sel.isCollapsed) return false;
+    var range = sel.getRangeAt(0);
+    var root = entryOf(range.commonAncestorContainer);
+    if(!root) return false;
+    var items = textFragmentsInRange(range, root);
+    if(!items.length) return false;
+    items.forEach(function(it){
+      var node = it.node;
+      if(it.to < node.textContent.length) node.splitText(it.to);
+      if(it.from > 0) node = node.splitText(it.from);
+      clearHighlightAround(node, root);
+      if(color){
+        var span = document.createElement("span");
+        span.style.backgroundColor = color;
+        node.parentNode.insertBefore(span, node);
+        span.appendChild(node);
+      }
+    });
+    if(root.normalize) root.normalize();
+    return true;
+  }
+
+  // Repair stored day content: move a background off a line box onto an inline
+  // span around the name, and wrap loose top-level text in a DIV so it can
+  // never become a full-width flex item.
+  function normalizeEntryHTML(html){
+    var tmp = document.createElement("div");
+    tmp.innerHTML = html || "";
+
+    Array.prototype.forEach.call(tmp.querySelectorAll("div, p"), function(b){
+      var color = b.style && b.style.backgroundColor;
+      if(!color) return;
+      b.style.backgroundColor = "";
+      if(!b.getAttribute("style")) b.removeAttribute("style");
+      var kids = Array.prototype.slice.call(b.childNodes);
+      var end = kids.length;
+      for(var i=0;i<kids.length;i++){
+        if(isBlockEl(kids[i]) || isNoteEl(kids[i])){ end = i; break; }
+      }
+      if(!end) return;
+      var span = document.createElement("span");
+      span.style.backgroundColor = color;
+      b.insertBefore(span, kids[0]);
+      for(var j=0;j<end;j++) span.appendChild(kids[j]);
+      while(span.lastChild && span.lastChild.nodeType === 3 && !span.lastChild.textContent.trim()){
+        b.insertBefore(span.lastChild, span.nextSibling);
+      }
+      // push a trailing run of spaces out of the colored box
+      var tail = span.lastChild;
+      if(tail && tail.nodeType === 3){
+        var txt = tail.textContent, cut = txt.length;
+        while(cut > 0 && !txt.charAt(cut-1).trim()) cut--;
+        if(cut > 0 && cut < txt.length) b.insertBefore(tail.splitText(cut), span.nextSibling);
+      }
+      if(!span.textContent.trim()){
+        while(span.firstChild) b.insertBefore(span.firstChild, span);
+        b.removeChild(span);
+      }
+    });
+
+    var out = document.createElement("div");
+    var run = null;
+    function flush(){
+      if(run && run.textContent.replace(/​/g,"").trim()) out.appendChild(run);
+      run = null;
+    }
+    Array.prototype.slice.call(tmp.childNodes).forEach(function(n){
+      if(isBlockEl(n)){ flush(); out.appendChild(n); }
+      else if(n.nodeType === 1 && n.tagName === "BR"){ flush(); }
+      else {
+        if(!run) run = document.createElement("div");
+        run.appendChild(n);
+      }
+    });
+    flush();
+    return out.innerHTML;
   }
 
   // ---------- Text / Select mouse modes ----------
@@ -2030,9 +2215,13 @@
     sel.removeAllRanges();
     sel.addRange(range);
     snapshot();
-    document.execCommand("styleWithCSS", false, true);
-    document.execCommand("hiliteColor", false, TAG_MODES[activeTag].color);
+    var tagged = applyHighlight(TAG_MODES[activeTag].color);
     sel.removeAllRanges();
+    lastSelectBlock = null;
+    if(!tagged){
+      dropSnapshot();
+      return;
+    }
     persist(true);
   });
 
