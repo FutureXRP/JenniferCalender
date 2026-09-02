@@ -991,10 +991,12 @@
     if(a > b){ var t = a; a = b; b = t; }
     saveCurrentEntries();
     var touchedVisible = false;
+    var wasClean = {};
     var cur = new Date(a);
     while(cur.getTime() <= b){
       var y = cur.getFullYear(), m = cur.getMonth(), d = cur.getDate();
       var key = keyFor(y,m);
+      if(!(key in wasClean)) wasClean[key] = monthIsUntouched(key);
       if(entries[key] && entries[key][d]){
         var next = ptoOnDayHTML(entries[key][d], name, empId, cover, on);
         if(next !== null){
@@ -1005,6 +1007,9 @@
       }
       cur.setDate(d + 1);
     }
+    // time off is data a rebuild reproduces, so these months keep following
+    // the roster
+    Object.keys(wasClean).forEach(function(k){ restampIfClean(k, wasClean[k]); });
     if(touchedVisible) render();
   }
 
@@ -1042,10 +1047,12 @@
     var key = keyFor(at.y, at.m);
     if(!entries[key]) return;
     saveCurrentEntries();
+    var wasClean = monthIsUntouched(key);
     h.prev = entries[key][at.d] || "";
     h.prevDate = h.date;
     var html = generateDayHTML(at.y, at.m, at.d);
     if(html) entries[key][at.d] = html; else delete entries[key][at.d];
+    restampIfClean(key, wasClean);
     if(at.y === curYear && at.m === curMonth) render();
   }
 
@@ -1057,6 +1064,7 @@
     var key = keyFor(y,m);
     if(!entries[key]) return;
     saveCurrentEntries();
+    var wasClean = monthIsUntouched(key);
     if(typeof h.prev === "string"){
       if(h.prev) entries[key][d] = h.prev; else delete entries[key][d];
     } else {
@@ -1065,21 +1073,55 @@
     }
     delete h.prev;
     delete h.prevDate;
+    restampIfClean(key, wasClean);
     if(y === curYear && m === curMonth) render();
   }
 
   // Re-sync every auto-built, never-hand-edited month with the current team
   // (called when employees or their weekly days change). Also builds the
   // displayed month if it's still empty. Hand-edited months are left alone.
+  // A month is only ever rewritten wholesale if it still looks exactly like
+  // what was generated. The fingerprint is taken when the month is built, so
+  // any change at all — a name typed in, a highlight, a nudged line — makes
+  // the month its own and safe from being rebuilt underneath.
+  function contentSignature(store){
+    var keys = Object.keys(store || {}).sort(function(a,b){ return a - b; });
+    var s = "";
+    for(var i=0;i<keys.length;i++) s += keys[i] + ":" + store[keys[i]] + "|";
+    var h = 5381;
+    for(var j=0;j<s.length;j++) h = ((h * 33) ^ s.charCodeAt(j)) >>> 0;
+    return String(h) + "." + s.length;
+  }
+
+  function markMonthGenerated(y,m){
+    var k = keyFor(y,m);
+    generatedMonths[k] = contentSignature(entries[k]);
+  }
+
+  function monthIsUntouched(k){
+    var f = generatedMonths[k];
+    return typeof f === "string" && f === contentSignature(entries[k]);
+  }
+
+  // Keep a month in sync after a data-driven change (PTO, holiday, PRN) that
+  // a rebuild would reproduce anyway
+  function restampIfClean(k, wasClean){
+    if(wasClean) generatedMonths[k] = contentSignature(entries[k]);
+  }
+
   function regenAutoMonths(){
     saveCurrentEntries();
     var touchedVisible = false;
     Object.keys(generatedMonths).forEach(function(k){
-      if(!generatedMonths[k]) return;
       var p = k.split("-");
       var y = parseInt(p[0],10), m = parseInt(p[1],10);
-      if(isNaN(y) || isNaN(m)) return;
+      if(isNaN(y) || isNaN(m)){ delete generatedMonths[k]; return; }
+      if(!monthIsUntouched(k)){
+        delete generatedMonths[k];   // it has been worked on — leave it alone
+        return;
+      }
       entries[k] = generateMonth(y,m);
+      generatedMonths[k] = contentSignature(entries[k]);
       if(y === curYear && m === curMonth) touchedVisible = true;
     });
     var curKey = keyFor(curYear,curMonth);
@@ -1087,7 +1129,7 @@
       var store = generateMonth(curYear,curMonth);
       if(Object.keys(store).length){
         entries[curKey] = store;
-        generatedMonths[curKey] = true;
+        markMonthGenerated(curYear,curMonth);
         touchedVisible = true;
       }
     }
@@ -1502,7 +1544,7 @@
     if(!confirm("Rebuild " + MONTHS[curMonth] + " " + curYear + " from the weekly schedules and PTO? This replaces the month's current entries.")) return;
     snapshot();
     entries[keyFor(curYear,curMonth)] = generateMonth(curYear,curMonth);
-    generatedMonths[keyFor(curYear,curMonth)] = true;
+    markMonthGenerated(curYear,curMonth);
     render();
     persist(true);
     showStatus("Month rebuilt ✓");
@@ -1568,7 +1610,7 @@
       var store = generateMonth(curYear,curMonth);
       if(Object.keys(store).length){
         entries[keyFor(curYear,curMonth)] = store;
-        generatedMonths[keyFor(curYear,curMonth)] = true;
+        markMonthGenerated(curYear,curMonth);
         render();
         persist(false);
         showStatus("Built from work schedule ✓");
@@ -2057,7 +2099,8 @@
 
     var mkey = keyFor(curYear,curMonth);
     if(!entries[mkey]) entries[mkey] = {};
-    if(generatedMonths[mkey]){
+    var wasClean = monthIsUntouched(mkey);
+    if(wasClean){
       var h = generateDayHTML(curYear,curMonth,d);
       if(h) entries[mkey][d] = h; else delete entries[mkey][d];
     } else {
@@ -2066,6 +2109,7 @@
       else cur = cur + '<div>' + esc(emp.name) + ' <span class="pto-note">PRN</span></div>';
       if(cur) entries[mkey][d] = cur; else delete entries[mkey][d];
     }
+    restampIfClean(mkey, wasClean);
     render();
     persist(true);
     showStatus((removing ? "Removed " : "Added ") + emp.name + " ✓");
@@ -2310,6 +2354,22 @@
       }
     });
     flush();
+
+    // Everyone who is off belongs together at the foot of the day, including
+    // days stamped before that block existed.
+    var bottom = null, offLines = [];
+    Array.prototype.slice.call(out.children).forEach(function(c){
+      if(c.classList && c.classList.contains("pto-bottom")){ bottom = c; return; }
+      if(c.querySelector && c.querySelector(".pto-off")) offLines.push(c);
+    });
+    if(bottom || offLines.length){
+      if(!bottom){
+        bottom = document.createElement("div");
+        bottom.className = "pto-bottom";
+      }
+      offLines.forEach(function(c){ bottom.appendChild(c); });
+      out.appendChild(bottom);          // always the last thing in the day
+    }
     return out.innerHTML;
   }
 
