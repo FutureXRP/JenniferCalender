@@ -863,24 +863,209 @@
 
   // Rebuild specific days (in already-built months only) after a PTO change.
   // Each affected day is recomputed from the weekly schedule + PTO.
-  function rebuildRange(startTs, endTs){
-    if(startTs === null || endTs === null || !teamActive()) return;
-    if(startTs > endTs){ var t = startTs; startTs = endTs; endTs = t; }
+  // ---------- Putting one PTO entry on (and back off) built days ----------
+  // A day is edited in place: only the person's own line changes. Everyone
+  // else on that day — names typed by hand, notes like "- 10A CLINIC",
+  // highlights, PRN people — is left exactly as it is.
+
+  // A day's lines, ignoring the block of people who are off
+  function dayLines(box){
+    var out = [];
+    for(var i=0;i<box.children.length;i++){
+      var c = box.children[i];
+      if(c.classList && c.classList.contains("pto-bottom")) continue;
+      out.push(c);
+    }
+    return out;
+  }
+
+  // The name on a line, without any trailing marker like "PTO" or "(for X)"
+  function lineNameText(line){
+    var s = "";
+    for(var i=0;i<line.childNodes.length;i++){
+      if(isNoteEl(line.childNodes[i])) break;
+      s += line.childNodes[i].textContent;
+    }
+    return s.replace(/\s+/g," ").trim();
+  }
+
+  // "Ashley - 10A CLINIC" still belongs to Ashley
+  function nameMatches(text, name){
+    var t = String(text).replace(/\s+/g," ").trim().toLowerCase();
+    var n = String(name || "").replace(/\s+/g," ").trim().toLowerCase();
+    if(!n || !t) return false;
+    if(t === n) return true;
+    if(t.indexOf(n) === 0){
+      var next = t.charAt(n.length);
+      return !next || !/[a-z0-9]/.test(next);
+    }
+    return false;
+  }
+
+  function findLineFor(lines, name){
+    for(var i=0;i<lines.length;i++){
+      if(nameMatches(lineNameText(lines[i]), name)) return lines[i];
+    }
+    return null;
+  }
+
+  function employeeIndexOfLine(line){
+    for(var j=0;j<employees.length;j++){
+      if(employees[j].name.trim() && nameMatches(lineNameText(line), employees[j].name)) return j;
+    }
+    return -1;
+  }
+
+  // Put a returning name back where the roster would have placed it
+  function insertInRosterOrder(box, line, empId){
+    var order = -1;
+    for(var i=0;i<employees.length;i++) if(employees[i].id === empId) order = i;
+    var lines = dayLines(box);
+    for(var k=0;k<lines.length;k++){
+      var other = employeeIndexOfLine(lines[k]);
+      if(other > order){ box.insertBefore(line, lines[k]); return; }
+    }
+    var bottom = box.querySelector(".pto-bottom");
+    if(bottom) box.insertBefore(line, bottom);
+    else box.appendChild(line);
+  }
+
+  // Edit one day's stored HTML. Returns the new HTML, or null to leave the
+  // day untouched (the person isn't on it, or it was never adjusted).
+  function ptoOnDayHTML(html, name, empId, cover, on){
+    var box = document.createElement("div");
+    box.innerHTML = normalizeEntryHTML(html || "");
+    var bottom = box.querySelector(".pto-bottom");
+    cover = (cover || "").trim();
+
+    if(on){
+      if(bottom && findLineFor(dayLines(bottom), name)) return null;   // already off
+      var line = findLineFor(dayLines(box), name);
+      if(!line) return null;                        // not working that day
+      if(cover){
+        line.innerHTML = esc(cover) + ' <span class="pto-note">(for ' + esc(name) + ')</span>';
+      } else {
+        box.removeChild(line);
+      }
+      var b = box.querySelector(".pto-bottom");
+      if(!b){
+        b = document.createElement("div");
+        b.className = "pto-bottom";
+        box.appendChild(b);
+      }
+      var off = document.createElement("div");
+      off.innerHTML = '<span class="pto-off">' + esc(name) + '</span> <span class="pto-note">PTO</span>';
+      b.appendChild(off);
+      return box.innerHTML;
+    }
+
+    if(!bottom) return null;
+    var offLine = findLineFor(dayLines(bottom), name);
+    if(!offLine) return null;                       // this day was never adjusted
+    bottom.removeChild(offLine);
+    if(!bottom.children.length) box.removeChild(bottom);
+
+    // a cover line goes back to being the person's own name
+    var lines = dayLines(box), restored = false;
+    for(var i=0;i<lines.length;i++){
+      var note = lines[i].querySelector(".pto-note");
+      if(!note) continue;
+      var forName = note.textContent.replace(/^\s*\(\s*for\s*/i,"").replace(/\)\s*$/,"");
+      if(nameMatches(forName, name)){
+        lines[i].innerHTML = esc(name);
+        restored = true;
+        break;
+      }
+    }
+    if(!restored){
+      var back = document.createElement("div");
+      back.innerHTML = esc(name);
+      insertInRosterOrder(box, back, empId);
+    }
+    return box.innerHTML;
+  }
+
+  function walkPtoDays(startStr, endStr, name, empId, cover, on){
+    var a = parseDateStr(startStr), b = parseDateStr(endStr);
+    if(a === null || b === null || !String(name || "").trim()) return;
+    if(a > b){ var t = a; a = b; b = t; }
     saveCurrentEntries();
     var touchedVisible = false;
-    var cur = new Date(startTs);
-    while(cur.getTime() <= endTs){
+    var cur = new Date(a);
+    while(cur.getTime() <= b){
       var y = cur.getFullYear(), m = cur.getMonth(), d = cur.getDate();
       var key = keyFor(y,m);
-      if(entries[key]){ // only months that already exist — new months build correctly on their own
-        var html = generateDayHTML(y,m,d);
-        if(html) entries[key][d] = html;
-        else delete entries[key][d];
-        if(y === curYear && m === curMonth) touchedVisible = true;
+      if(entries[key] && entries[key][d]){
+        var next = ptoOnDayHTML(entries[key][d], name, empId, cover, on);
+        if(next !== null){
+          if(next.replace(/​/g,"").trim()) entries[key][d] = next;
+          else delete entries[key][d];
+          if(y === curYear && m === curMonth) touchedVisible = true;
+        }
       }
       cur.setDate(d + 1);
     }
     if(touchedVisible) render();
+  }
+
+  // What was actually put on the calendar is remembered on the entry, so
+  // editing its fields later still takes the right days back off.
+  function ptoApply(p){
+    var emp = empById(p.empId);
+    if(!emp || !emp.name.trim()) return;
+    walkPtoDays(p.start, p.end, emp.name, p.empId, p.cover, true);
+    p.applied = { empId: p.empId, name: emp.name, start: p.start, end: p.end, cover: p.cover || "" };
+  }
+
+  function ptoUnapply(p){
+    var was = p.applied;
+    if(!was){
+      var e = empById(p.empId);
+      was = { empId: p.empId, name: e ? e.name : "", start: p.start, end: p.end, cover: p.cover || "" };
+    }
+    walkPtoDays(was.start, was.end, was.name, was.empId, was.cover, false);
+    delete p.applied;
+  }
+
+  // Holidays replace the whole day, so the day's previous content is kept
+  // and put back if the holiday is removed.
+  function holidayDayParts(h){
+    var t = parseDateStr(h.date);
+    if(t === null) return null;
+    var dt = new Date(t);
+    return { y: dt.getFullYear(), m: dt.getMonth(), d: dt.getDate() };
+  }
+
+  function holApply(h){
+    var at = holidayDayParts(h);
+    if(!at) return;
+    var key = keyFor(at.y, at.m);
+    if(!entries[key]) return;
+    saveCurrentEntries();
+    h.prev = entries[key][at.d] || "";
+    h.prevDate = h.date;
+    var html = generateDayHTML(at.y, at.m, at.d);
+    if(html) entries[key][at.d] = html; else delete entries[key][at.d];
+    if(at.y === curYear && at.m === curMonth) render();
+  }
+
+  function holUnapply(h){
+    var date = h.prevDate || h.date;
+    var t = parseDateStr(date);
+    if(t === null) return;
+    var dt = new Date(t), y = dt.getFullYear(), m = dt.getMonth(), d = dt.getDate();
+    var key = keyFor(y,m);
+    if(!entries[key]) return;
+    saveCurrentEntries();
+    if(typeof h.prev === "string"){
+      if(h.prev) entries[key][d] = h.prev; else delete entries[key][d];
+    } else {
+      var html = generateDayHTML(y,m,d);
+      if(html) entries[key][d] = html; else delete entries[key][d];
+    }
+    delete h.prev;
+    delete h.prevDate;
+    if(y === curYear && m === curMonth) render();
   }
 
   // Re-sync every auto-built, never-hand-edited month with the current team
@@ -1050,7 +1235,7 @@
         if(p.confirmed !== false){
           snapshot();
           p.confirmed = false;
-          rebuildRange(parseDateStr(p.start), parseDateStr(p.end));
+          ptoUnapply(p);
           refreshRow();
         }
       }
@@ -1110,7 +1295,7 @@
         if(!p.end) p.end = p.start;
         snapshot();
         p.confirmed = true;
-        rebuildRange(parseDateStr(p.start), parseDateStr(p.end));
+        ptoApply(p);
         refreshRow();
         persist(true);
         showStatus("Time off added ✓");
@@ -1129,9 +1314,8 @@
       del.onclick = function(){
         var wasConfirmed = p.confirmed !== false;
         if(wasConfirmed) snapshot();
-        var a = parseDateStr(p.start), b = parseDateStr(p.end);
+        if(wasConfirmed) ptoUnapply(p);
         pto = pto.filter(function(x){ return x.id !== p.id; });
-        if(wasConfirmed) rebuildRange(a, b);
         renderDash();
         persist(true);
         showStatus(wasConfirmed ? "Time off removed ✓" : "Draft discarded");
@@ -1182,8 +1366,7 @@
         if(h.confirmed !== false){
           snapshot();
           h.confirmed = false;
-          var t = parseDateStr(h.date);
-          rebuildRange(t, t);
+          holUnapply(h);
           refreshRow();
         }
       }
@@ -1233,8 +1416,7 @@
         if(!h.date){ alert("Pick the holiday's date first."); return; }
         snapshot();
         h.confirmed = true;
-        var t = parseDateStr(h.date);
-        rebuildRange(t, t);
+        holApply(h);
         refreshRow();
         persist(true);
         showStatus("Holiday added ✓");
@@ -1253,9 +1435,11 @@
       del.onclick = function(){
         var wasConfirmed = h.confirmed !== false;
         if(wasConfirmed) snapshot();
-        var t = parseDateStr(h.date);
+        if(wasConfirmed){
+          h.confirmed = false;
+          holUnapply(h);
+        }
         holidays = holidays.filter(function(x){ return x.id !== h.id; });
-        if(wasConfirmed) rebuildRange(t, t);
         renderDash();
         persist(true);
         showStatus(wasConfirmed ? "Holiday removed ✓" : "Draft discarded");
