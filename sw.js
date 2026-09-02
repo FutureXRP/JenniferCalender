@@ -1,7 +1,9 @@
 /* Service worker: lets the schedule app load instantly and work offline.
-   Navigations try the network first (so updates arrive), falling back to the
-   cached copy; static assets are served cache-first. */
-var CACHE = "schedule-app-v1";
+   Navigations always go to the network for the newest build (bypassing the
+   HTTP cache), falling back to the cached copy only when offline; static
+   assets are served cache-first. The cache name carries the app version so a
+   new build replaces the old cache on install. */
+var CACHE = "schedule-app-2026.09.02.2";
 var ASSETS = [
   "./",
   "./index.html",
@@ -36,9 +38,11 @@ self.addEventListener("fetch", function(e){
 
   if(e.request.mode === "navigate"){
     e.respondWith(
-      fetch(e.request).then(function(res){
-        var copy = res.clone();
-        caches.open(CACHE).then(function(c){ c.put("./index.html", copy); });
+      fetch(e.request.url, { cache: "no-store", credentials: "same-origin" }).then(function(res){
+        if(res && res.ok){
+          var copy = res.clone();
+          caches.open(CACHE).then(function(c){ c.put("./index.html", copy); });
+        }
         return res;
       }).catch(function(){
         return caches.match("./index.html");
@@ -50,8 +54,10 @@ self.addEventListener("fetch", function(e){
   e.respondWith(
     caches.match(e.request).then(function(hit){
       return hit || fetch(e.request).then(function(res){
-        var copy = res.clone();
-        caches.open(CACHE).then(function(c){ c.put(e.request, copy); });
+        if(res && res.ok){
+          var copy = res.clone();
+          caches.open(CACHE).then(function(c){ c.put(e.request, copy); });
+        }
         return res;
       });
     })

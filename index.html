@@ -287,19 +287,18 @@
     font-family:var(--entry-font);
     font-size:var(--entry-size);
     line-height:1.4;
-    padding:2px 8px 6px 8px;
+    padding:2px 8px 6px 8px;   /* bottom padding grows to make room for the PTO block */
     min-height:82px;
     outline:none;
     word-wrap:break-word;
     white-space:pre-wrap;
-    display:flex;
-    flex-direction:column;
+    display:block;
+    position:relative;
   }
-  /* People on PTO sit at the very bottom of the day box */
-  .entry .pto-bottom{margin-top:auto;padding-top:4px;}
-  /* A top-level span is a flex item; keep it hugging its letters so a
-     highlight can never stretch across the whole day */
-  .entry > span{align-self:flex-start;}
+  /* People on PTO sit at the very bottom of the day box. The editable area
+     stays a plain block (no flex/grid) so typing behaves the same in every
+     browser; the block is anchored to the bottom edge instead. */
+  .entry .pto-bottom{position:absolute;left:8px;right:8px;bottom:4px;}
   .entry:focus{background:#f2f8f5;}
   .entry:empty::before{
     content:"+";
@@ -438,7 +437,8 @@
     <button id="printBtn" class="primary">🖨 Print</button>
     <span id="saveStatus" class="save-status"></span>
   </div>
-  <div class="hint">Set up your team under 👥 Team &amp; PTO — each person's weekly schedule builds every new month automatically, and PTO swaps in the covering employee on just those days. Each month is saved separately, so edits to one month never change another. Click inside any day to edit it by hand, select a name and click a color to highlight it (↩ Undo steps back), and use 📱 Text as PDF to send the month from your phone.</div>
+  <div class="hint">Set up your team under 👥 Team &amp; PTO — each person's weekly schedule builds every new month automatically, and PTO swaps in the covering employee on just those days. Each month is saved separately, so edits to one month never change another. Click inside any day to edit it by hand, select a name and click a color to highlight it (↩ Undo steps back), and use 📱 Text as PDF to send the month from your phone. <span id="appVersion" title="App version — if this doesn't match the latest, close every window of the app and reopen it"></span></div>
+  <div class="hint" id="saveWarn" hidden style="color:#b23b2e;font-weight:600;"></div>
 </div>
 
 <div class="dash" id="dashPanel" hidden>
@@ -520,6 +520,8 @@
   //            autoFill, employees:[{id,name,color,days:[7 bools]}],
   //            pto:[{id,empId,start:"YYYY-MM-DD",end:"YYYY-MM-DD",cover}], nextId }
   var STORAGE_KEY = "printable-calendar-data-v1";
+  var APP_VERSION = "2026.09.02.2";              // shown in the toolbar; bump with every release
+  var TAB_ID = Math.random().toString(36).slice(2) + Date.now().toString(36);
 
   function loadData(){
     try{
@@ -538,12 +540,13 @@
             nextId: data.nextId || 1,
             generatedMonths: data.generatedMonths || {},
             prn: data.prn || {},
-            holidays: Array.isArray(data.holidays) ? data.holidays : []
+            holidays: Array.isArray(data.holidays) ? data.holidays : [],
+            rev: data.rev || 0
           };
         }
       }
     }catch(e){ /* corrupted or unavailable storage — start fresh */ }
-    return { entries:{}, notes:{}, font:null, size:null, autoFill:true, employees:[], pto:[], nextId:1, generatedMonths:{}, prn:{}, holidays:[] };
+    return { entries:{}, notes:{}, font:null, size:null, autoFill:true, employees:[], pto:[], nextId:1, generatedMonths:{}, prn:{}, holidays:[], rev:0 };
   }
 
   var saved = loadData();
@@ -572,8 +575,34 @@
     statusTimer = setTimeout(function(){ saveStatus.classList.remove("show"); }, 2200);
   }
 
+  // Every save carries a revision number. If another window of the app has
+  // saved since this one last did, this window must not overwrite that work —
+  // it takes the newer data instead. (Two open tabs used to silently clobber
+  // each other: whichever saved last won, and days reverted.)
+  var dataRev = saved.rev || 0;
+
+  function readStored(){
+    try{
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if(!raw) return null;
+      var d = JSON.parse(raw);
+      return (d && typeof d === "object") ? d : null;
+    }catch(e){ return null; }
+  }
+
+  function storedIsNewer(){
+    var d = readStored();
+    return !!d && d.writer !== TAB_ID && (d.rev || 0) > dataRev;
+  }
+
+  var saveWarn = document.getElementById("saveWarn");
   function persist(showMsg){
     saveCurrentEntries();
+    if(storedIsNewer()){
+      adoptStored("Updated from your other window ✓");
+      return;
+    }
+    dataRev++;
     try{
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         entries: entries,
@@ -586,13 +615,45 @@
         nextId: nextId,
         generatedMonths: generatedMonths,
         prn: prn,
-        holidays: holidays
+        holidays: holidays,
+        rev: dataRev,
+        writer: TAB_ID,
+        savedAt: new Date().toISOString(),
+        appVersion: APP_VERSION
       }));
+      saveWarn.hidden = true;
       if(showMsg) showStatus("Saved ✓");
     }catch(e){
+      dataRev--;
+      saveWarn.textContent = "⚠ Your changes are NOT being saved — this browser is blocking storage (private window, or storage full). Export a backup now.";
+      saveWarn.hidden = false;
       if(showMsg) showStatus("Save failed");
     }
   }
+
+  // Replace this window's data with what is stored (written by another window)
+  function adoptStored(msg){
+    var d = readStored();
+    if(!d) return;
+    entries = d.entries || {};
+    notes = d.notes || {};
+    employees = Array.isArray(d.employees) ? d.employees : [];
+    pto = Array.isArray(d.pto) ? d.pto : [];
+    nextId = Math.max(nextId, d.nextId || 1);
+    generatedMonths = d.generatedMonths || {};
+    prn = d.prn || {};
+    holidays = Array.isArray(d.holidays) ? d.holidays : [];
+    dataRev = d.rev || 0;
+    ensureYearOption(curYear);
+    render();
+    renderDash();
+    if(msg) showStatus(msg);
+  }
+
+  window.addEventListener("storage", function(e){
+    if(e.key !== STORAGE_KEY || !e.newValue) return;
+    if(storedIsNewer()) adoptStored("Updated from your other window ✓");
+  });
 
   // Auto-save shortly after the user stops typing
   var autoSaveTimer = null;
@@ -750,7 +811,22 @@
       }
       calBody.appendChild(tr);
     }
+    fitPtoBlocks();
   }
+
+  // Reserve room under each day's working list for its block of people who
+  // are off (the block is anchored to the bottom edge of the day).
+  function fitPtoBlocks(){
+    calBody.querySelectorAll(".entry").forEach(function(el){
+      var b = null;
+      for(var i=0;i<el.children.length;i++){
+        var c = el.children[i];
+        if(c.classList && c.classList.contains("pto-bottom")){ b = c; break; }
+      }
+      el.style.paddingBottom = b ? (b.offsetHeight + 8) + "px" : "";
+    });
+  }
+  window.addEventListener("resize", fitPtoBlocks);
 
   // ---------- Employees, weekly block schedules, PTO ----------
   var dashPanel = document.getElementById("dashPanel");
@@ -932,7 +1008,7 @@
 
   // Edit one day's stored HTML. Returns the new HTML, or null to leave the
   // day untouched (the person isn't on it, or it was never adjusted).
-  function ptoOnDayHTML(html, name, empId, cover, on){
+  function ptoOnDayHTML(html, name, empId, cover, on, scheduled){
     var box = document.createElement("div");
     box.innerHTML = normalizeEntryHTML(html || "");
     var bottom = box.querySelector(".pto-bottom");
@@ -941,11 +1017,20 @@
     if(on){
       if(bottom && findLineFor(dayLines(bottom), name)) return null;   // already off
       var line = findLineFor(dayLines(box), name);
-      if(!line) return null;                        // not working that day
-      if(cover){
-        line.innerHTML = esc(cover) + ' <span class="pto-note">(for ' + esc(name) + ')</span>';
-      } else {
-        box.removeChild(line);
+      // Someone who is neither on this day nor due to work it has nothing to
+      // come off. Someone due to work it is marked off even if their name was
+      // edited away or spelled differently.
+      if(!line && !scheduled) return null;
+      if(line){
+        if(cover){
+          line.innerHTML = esc(cover) + ' <span class="pto-note">(for ' + esc(name) + ')</span>';
+        } else {
+          box.removeChild(line);
+        }
+      } else if(cover){
+        var cl = document.createElement("div");
+        cl.innerHTML = esc(cover) + ' <span class="pto-note">(for ' + esc(name) + ')</span>';
+        insertInRosterOrder(box, cl, empId);
       }
       var b = box.querySelector(".pto-bottom");
       if(!b){
@@ -997,8 +1082,10 @@
       var y = cur.getFullYear(), m = cur.getMonth(), d = cur.getDate();
       var key = keyFor(y,m);
       if(!(key in wasClean)) wasClean[key] = monthIsUntouched(key);
-      if(entries[key] && entries[key][d]){
-        var next = ptoOnDayHTML(entries[key][d], name, empId, cover, on);
+      if(entries[key]){   // only months that already exist — new months build correctly on their own
+        var emp = empById(empId);
+        var scheduled = !!emp && (emp.status || "ft") !== "prn" && !!emp.days[new Date(y,m,d).getDay()];
+        var next = ptoOnDayHTML(entries[key][d] || "", name, empId, cover, on, scheduled);
         if(next !== null){
           if(next.replace(/​/g,"").trim()) entries[key][d] = next;
           else delete entries[key][d];
@@ -1087,7 +1174,9 @@
   function contentSignature(store){
     var keys = Object.keys(store || {}).sort(function(a,b){ return a - b; });
     var s = "";
-    for(var i=0;i<keys.length;i++) s += keys[i] + ":" + store[keys[i]] + "|";
+    // compared in normalized form, so the browser's own re-serialization of a
+    // rendered day never counts as a change
+    for(var i=0;i<keys.length;i++) s += keys[i] + ":" + normalizeEntryHTML(store[keys[i]]) + "|";
     var h = 5381;
     for(var j=0;j<s.length;j++) h = ((h * 33) ^ s.charCodeAt(j)) >>> 0;
     return String(h) + "." + s.length;
@@ -1619,6 +1708,8 @@
       }
       return;
     }
+    // Copying an older month is only for calendars with no team set up at all
+    if(employees.length) return;
     var src = bestFillSource();
     if(!src) return;
     snapshot();
@@ -1643,6 +1734,7 @@
   // month stops tracking the weekly schedule so it never changes on its own.
   calBody.addEventListener("input", function(){
     delete generatedMonths[keyFor(curYear,curMonth)];
+    fitPtoBlocks();
     scheduleAutoSave();
   });
   noteEl.addEventListener("input", scheduleAutoSave);
@@ -1676,7 +1768,7 @@
     persist(false);
     window.print();
   };
-  window.onbeforeprint = function(){ persist(false); };
+  window.onbeforeprint = function(){ persist(false); fitPtoBlocks(); };
   window.addEventListener("beforeunload", function(){ persist(false); });
 
   document.getElementById("saveBtn").onclick = function(){ persist(true); };
@@ -2474,10 +2566,12 @@
   var sizeSel = document.getElementById("sizeSel");
   fontSel.onchange = function(){
     document.documentElement.style.setProperty("--entry-font", this.value);
+    fitPtoBlocks();
     persist(false);
   };
   sizeSel.onchange = function(){
     document.documentElement.style.setProperty("--entry-size", this.value);
+    fitPtoBlocks();
     persist(false);
   };
   // Restore saved font/size preferences
@@ -2491,9 +2585,33 @@
   render();
   materializeIfEmpty();
 
-  // Installable web app: register the offline service worker (https or localhost only)
+  // Version stamp, so it's always possible to tell which build is running
+  document.getElementById("appVersion").textContent = "v" + APP_VERSION;
+  try{
+    var seen = localStorage.getItem("schedule-app-seen-version");
+    if(seen && seen !== APP_VERSION) showStatus("Updated to v" + APP_VERSION + " ✓");
+    localStorage.setItem("schedule-app-seen-version", APP_VERSION);
+  }catch(e){}
+
+  // Installable web app: register the offline service worker (https or
+  // localhost only). When a newer build has been installed, load it right
+  // away — an installed app can otherwise keep running an old copy for days.
   if("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")){
-    navigator.serviceWorker.register("./sw.js").catch(function(){ /* offline mode unavailable */ });
+    var hadController = !!navigator.serviceWorker.controller;
+    var reloading = false;
+    navigator.serviceWorker.addEventListener("controllerchange", function(){
+      if(!hadController){ hadController = true; return; }   // first install: nothing to reload for
+      if(reloading) return;
+      reloading = true;
+      persist(false);
+      location.reload();
+    });
+    navigator.serviceWorker.register("./sw.js").then(function(reg){
+      var check = function(){ try{ reg.update(); }catch(e){} };
+      check();
+      document.addEventListener("visibilitychange", function(){ if(!document.hidden) check(); });
+      setInterval(check, 60 * 60 * 1000);
+    }).catch(function(){ /* offline mode unavailable */ });
   }
 })();
 </script>
